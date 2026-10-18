@@ -1,0 +1,437 @@
+"""pipeline.py — read, map, type, convert and check client files into canonical tables.
+
+    ingest_table(paths, table, profile=None, params=None, accept=()) -> TableResult
+    ingest_folder(folder, profile=None, params=None, accept=(), strict=True) -> IngestResult
+    write_outputs(result, out_dir) -> Path
+
+Canonical columns and units are in schema.py (inches, pounds, dates, seconds).
+Rows that cannot be used (zero/negative quantity, blank or unreadable key or
+date) go to `rejects` with a reason; nothing is dropped silently.  Problems
+that make the data untrustworthy are "block" issues: ingest_folder raises
+IngestError unless the consultant accepts those codes.
+
+Does not judge item-level data quality (placeholders, outliers, single rows in
+the wrong unit, duplicate SKUs, orphans) — that is quality/.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pandas as pd
+
+from . import coerce
+from .checks import Issue, fmt_day, issues_frame, missing_day_runs, snapshot_gaps
+from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile, suggest_mapping
+from .params import IngestParams
+from .read import CSV_EXT, EXCEL_EXT, read_headers, read_raw
+from .schema import REQUIRED_TABLES, TABLES
+from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
+
+_DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
+
+
+class IngestError(Exception):
+    def __init__(self, result):
+        self.result = result
+        b = result.issues[result.issues.severity == "block"]
+        lines = [f"  [{r.table}] {r.code}: {r.message}" for r in b.itertuples()]
+        super().__init__("Ingest refused the data:\n" + "\n".join(lines) +
+                         "\nFix the files, or pass accept=[code] for a block you have checked.")
+
+
+@dataclass
+class TableResult:
+    name: str
+    paths: list
+    table: pd.DataFrame | None = None
+    rejects: pd.DataFrame | None = None
+    issues: list = field(default_factory=list)
+    units: pd.DataFrame | None = None
+    mapping: Mapping | None = None
+    date_format: str | None = None
+
+    @property
+    def blocked(self) -> bool:
+        return any(i.severity == "block" for i in self.issues)
+
+
+@dataclass
+class IngestResult:
+    tables: dict
+    rejects: dict
+    issues: pd.DataFrame
+    units: pd.DataFrame
+    mappings: dict
+    sources: dict
+    date_formats: dict
+
+    @property
+    def blocked(self) -> bool:
+        return bool((self.issues["severity"] == "block").any())
+
+
+# ---- one table ------------------------------------------------------------------
+
+def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: IngestParams | None = None,
+                 accept=()) -> TableResult:
+    params = params or IngestParams()
+    paths = [Path(p) for p in (paths if isinstance(paths, (list, tuple)) else [paths])]
+    res = TableResult(table, [str(p) for p in paths])
+    accepted = set(accept)
+
+    def add(code, severity, message, count=None, share=None, fld=None):
+        if severity == "block" and code in accepted:
+            severity = "accepted"
+        res.issues.append(Issue(table, code, severity, message,
+                                None if count is None else int(count),
+                                None if share is None else float(share), fld))
+
+    # -- read every file; same layout required to stack them
+    frames, headers = [], None
+    for p in paths:
+        df, meta = read_raw(p, sheet=profile.sheets.get(table) if profile else None)
+        if meta["encoding"] not in (None, "utf-8"):
+            add("encoding_fallback", "info", f"{p.name} is not UTF-8; read as {meta['encoding']}.")
+        if meta["duplicate_headers"]:
+            add("duplicate_header", "block", f"{p.name} repeats column names {meta['duplicate_headers']}; "
+                "it is unclear which one holds the data.")
+            return res
+        n = meta["data_rows"]
+        if n in params.excel_row_limits:
+            add("excel_row_limit", "block", f"{p.name} has exactly {n:,} data rows, a spreadsheet row limit, so the "
+                "export was probably cut off. Re-export from the WMS as CSV, or accept if the file truly ends there.",
+                count=n)
+        if headers is not None and meta["headers"] != headers:
+            add("header_mismatch", "block", f"{p.name} has different columns from {paths[0].name}; "
+                "files for one table must share a layout.")
+            return res
+        headers = meta["headers"]
+        df["_file"], df["_row"] = p.name, range(2, n + 2)  # spreadsheet row number (header is row 1)
+        frames.append(df)
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    if len(df) == 0:
+        add("empty_table", "block", f"{paths[0].name} has a header but no rows.")
+        return res
+    n_rows = len(df)
+
+    # -- columns
+    if profile and table in profile.columns:
+        m = mapping_from_profile(headers, table, profile.columns[table])
+    else:
+        m = suggest_mapping(headers, table, params)
+        add("auto_mapped", "info", "Columns matched automatically: " +
+            "; ".join(f"{f} <- '{h}'" + (" (fuzzy)" if m.method[f] == "fuzzy" else "") for f, h in m.mapping.items()) +
+            ". Save them as a WMS profile once confirmed.")
+        fuzzy = {f: h for f, h in m.mapping.items() if m.method[f] == "fuzzy"}
+        if fuzzy:
+            add("fuzzy_header", "warn", "Matched on similar names only: " +
+                "; ".join(f"{f} <- '{h}'" for f, h in fuzzy.items()) + ". Check them.")
+        for f, hs in m.alternatives.items():
+            add("alternative_columns", "info", f"{f} uses '{m.mapping[f]}'; also possible: {hs}.", fld=f)
+    res.mapping = m
+    req = {f.name for f in TABLES[table] if f.required}
+    for f, hs in m.ambiguous.items():
+        add("ambiguous_column", "block" if f in req else "warn",
+            f"{f} could be any of {hs}; name it in the WMS profile.", fld=f)
+    missing = [f for f in m.missing_required if f not in m.ambiguous]
+    if missing:
+        add("missing_required_column", "block", f"No column found for required field(s) {missing}. "
+            f"Columns in the file: {headers}.")
+    if m.missing_required:
+        return res
+    if m.missing_optional:
+        add("optional_columns_absent", "info", f"Not in the file: {m.missing_optional}.")
+
+    # -- types
+    out = pd.DataFrame(index=df.index)
+    reason = pd.Series(pd.NA, index=df.index, dtype="string")
+    reason_field = {}
+
+    def reject(mask, why, fname):
+        new = mask & reason.isna()
+        reason[new] = why
+        if new.any():
+            reason_field.setdefault(why, set()).add(fname)
+
+    date_ok = True
+    for f in TABLES[table]:
+        if f.name not in m.mapping:
+            continue
+        col = df[m.mapping[f.name]]
+        if f.kind == "id":
+            vals, changed = coerce.normalise_ids(col, upper=params.upper_case_skus and f.name == "sku")
+            if f.name == "sku" and changed:
+                add("sku_normalised", "info", f"{changed:,} SKU spellings trimmed or upper-cased to match "
+                    "the rest (e.g. ' ab123 ' -> 'AB123').", count=changed, fld=f.name)
+            out[f.name] = vals
+        elif f.kind == "text":
+            out[f.name] = col.astype("string")
+        elif f.kind in ("length", "weight", "count", "qty", "stock"):
+            num, failed = coerce.to_number(col)
+            if failed.any():
+                ex = col[failed].drop_duplicates().head(3).tolist()
+                if f.required:
+                    reject(failed, "unparseable", f.name)
+                else:
+                    add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not numbers "
+                        f"(e.g. {ex}); left blank.", count=failed.sum(), share=failed.mean(), fld=f.name)
+            if f.kind in ("qty", "stock"):
+                bad = (num <= 0) if f.kind == "qty" else (num < 0)
+                reject(bad.fillna(False), "bad_qty", f.name)
+                whole = num.dropna()
+                if len(whole) and (whole % 1 == 0).all():
+                    num = num.astype("Int64")
+            out[f.name] = num
+        elif f.kind == "date":
+            declared = profile.date_format if profile else None
+            fmt, status, fits = coerce.choose_date_format(col, declared, params.min_date_parse_share)
+            best = sorted(fits.items(), key=lambda kv: -kv[1])[:2]
+            best_txt = ", ".join(f"{k} ({v:.0%})" for k, v in best)
+            ex = col.dropna().drop_duplicates().head(3).tolist()
+            if status == "mismatch":
+                add("date_format_mismatch", "block", f"Declared date format {declared} parses only "
+                    f"{fits.get(declared, 0):.0%} of {f.name} values (e.g. {ex}); best fits: {best_txt}.", fld=f.name)
+            elif status == "ambiguous":
+                good = [k for k, v in fits.items() if v >= params.min_date_parse_share]
+                add("date_format_ambiguous", "block", f"{f.name} values (e.g. {ex}) fit more than one format: "
+                    f"{good}. Declare date_format in the WMS profile.", fld=f.name)
+            elif status == "none":
+                add("date_unparseable", "block", f"No known date format fits {f.name} (e.g. {ex}); "
+                    f"best: {best_txt}.", fld=f.name)
+            if fmt is None:
+                date_ok = False
+                out[f.name] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+                continue
+            if status == "detected":
+                add("date_format_detected", "info", f"{f.name} read as {fmt}.", fld=f.name)
+            res.date_format = fmt
+            vals, failed = coerce.to_date(col, fmt)
+            if f.required:
+                reject(failed, "unparseable", f.name)
+            out[f.name] = vals
+        elif f.kind == "time":
+            secs, failed = coerce.to_seconds(col)
+            if failed.any():
+                add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not times; left blank.",
+                    count=failed.sum(), share=failed.mean(), fld=f.name)
+            out[f.name] = secs
+        if f.required:
+            reject(col.isna(), "missing_value", f.name)
+
+    # -- rows set aside
+    for why, label in [("bad_qty", "zero or negative quantity"), ("missing_value", "a blank required field"),
+                       ("unparseable", "an unreadable required value")]:
+        k = int((reason == why).sum())
+        if k:
+            share = k / n_rows
+            sev = "block" if share > params.max_bad_row_share else "warn"
+            add(why, sev, f"{k:,} rows ({share:.2%}) have {label} in {sorted(reason_field[why])} and were set "
+                f"aside{'' if sev == 'warn' else f'; more than {params.max_bad_row_share:.0%} means the extract is suspect'}.",
+                count=k, share=share)
+    keep = reason.isna()
+    rej = df.loc[~keep].copy()
+    rej.insert(0, "reason", reason[~keep])
+    res.rejects = rej.reset_index(drop=True)
+    out = out.loc[keep].reset_index(drop=True)
+
+    # -- units (item master)
+    if table == "item_master":
+        out, res.units = _units(out, m, profile, params, add)
+
+    # -- dates: range, gaps, closures
+    dfield = _DATE_FIELD.get(table)
+    if dfield in out and date_ok and out[dfield].notna().any():
+        d = out[dfield]
+        add("date_range", "info", f"{fmt_day(d.min())} to {fmt_day(d.max())} "
+            f"({(d.max() - d.min()).days + 1} days, {d.nunique()} with rows).", fld=dfield)
+        if table in params.max_gap_days:
+            runs = missing_day_runs(d)
+            lim = params.max_gap_days[table]
+            long = [r for r in runs if r[2] > lim]
+            short = [r for r in runs if r[2] <= lim]
+            if long:
+                add("date_gap", "block", f"No rows for {len(long)} stretch(es) longer than {lim} days: " +
+                    "; ".join(f"{fmt_day(a)} to {fmt_day(b)} ({k} days)" for a, b, k in long[:5]) +
+                    ". The extract may be missing data.", count=sum(r[2] for r in long), fld=dfield)
+            if short:
+                add("closed_days", "info", f"{sum(r[2] for r in short)} day(s) with no rows in short runs "
+                    f"(closures, weekends), e.g. " + ", ".join(fmt_day(a) for a, _, _ in short[:5]) + ".",
+                    count=sum(r[2] for r in short), fld=dfield)
+        if table == "inventory":
+            med, wide = snapshot_gaps(d, params.snapshot_gap_factor)
+            if wide:
+                add("snapshot_gap", "block", f"Snapshots are usually {med:.0f} days apart, but: " +
+                    "; ".join(f"{fmt_day(a)} to {fmt_day(b)} ({k} days)" for a, b, k in wide[:5]) + ".",
+                    count=len(wide), fld=dfield)
+    res.table = out
+    return res
+
+
+def _units(out, m, profile, params, add):
+    rows = []
+    for g in ("unit", "case"):
+        gf = [f for f in TABLES["item_master"] if f.group == g and f.name in out]
+        if not gf:
+            continue
+        dims = [f.name for f in gf if f.kind == "length"]
+        wt = next((f.name for f in gf if f.kind == "weight"), None)
+        decl = {}
+        for kind in ("length", "weight"):
+            hints = {header_unit(m.mapping[f.name], kind) for f in gf if f.kind == kind} - {None}
+            if len(hints) > 1:
+                add("unit_conflict", "block", f"{g} {kind} headers name different units {sorted(hints)}.")
+                return out, pd.DataFrame(rows)
+            if hints:
+                decl[kind] = (hints.pop(), "header")
+            elif profile and profile.units.get(kind):
+                decl[kind] = (profile.units[kind], "profile")
+        a = assess(out, dims if len(dims) == 3 else [], wt, g, params)
+        cand = a
+        for kind in ("length", "weight"):
+            if kind in decl:
+                cand = cand[cand[kind] == decl[kind][0]]
+        fits = a[a.plausible & a.evidence]
+        fits_txt = "; ".join(describe(r) for r in fits.itertuples()) or "none"
+        chosen = None
+        if len(decl) == 2:
+            row = cand.iloc[0]
+            chosen = row
+            if row.evidence and not row.plausible:
+                if len(fits):
+                    add("unit_mismatch", "block", f"{g}: declared {describe(row)} looks wrong for consumer goods; "
+                        f"the data fits {fits_txt}.")
+                    chosen = None
+                else:
+                    add("unit_implausible", "warn", f"{g}: declared {describe(row)} is outside the usual range, "
+                        "and no other unit pair fits better; kept as declared.")
+        else:
+            plaus = cand[cand.plausible & cand.evidence]
+            undeclared = [k for k in ("length", "weight") if k not in decl]
+            if len(plaus) == 1:
+                chosen = plaus.iloc[0]
+                add("units_statistical", "warn", f"{g}: {', '.join(undeclared)} unit not stated; the data fits only "
+                    f"{describe(chosen)}. Declare units in the WMS profile to confirm.")
+            elif len(plaus) > 1:
+                add("unit_ambiguous", "block", f"{g}: {', '.join(undeclared)} unit not stated and the data fits "
+                    f"several: " + "; ".join(describe(r) for r in plaus.itertuples()) +
+                    ". Declare units in the WMS profile or the headers.")
+            else:
+                add("unit_ambiguous", "block", f"{g}: {', '.join(undeclared)} unit not stated and no unit pair "
+                    f"looks like consumer goods (fits overall: {fits_txt}). Declare units.")
+        if chosen is None:
+            continue
+        lu, wu = chosen.length, chosen.weight
+        methods = {decl.get(k, (None, "statistical"))[1] for k in ("length", "weight")}
+        for f in dims:
+            out[f] = out[f] * LENGTH_TO_IN[lu]
+        if wt:
+            out[wt] = out[wt] * WEIGHT_TO_LB[wu]
+        add("units", "info", f"{g}: {lu}/{wu} from {' + '.join(sorted(methods))}; {describe(chosen)}.")
+        if (lu, wu) != ("in", "lb"):
+            add("unit_converted", "info", f"{g} dimensions converted {lu} -> in and weight {wu} -> lb.")
+        rows.append(dict(group=g, length=lu, weight=wu, method="+".join(sorted(methods)),
+                         plausible=bool(chosen.plausible), median_longest_in=chosen.median_longest_in,
+                         median_density_lb_ft3=chosen.median_density_lb_ft3))
+    return out, pd.DataFrame(rows, columns=["group", "length", "weight", "method", "plausible",
+                                            "median_longest_in", "median_density_lb_ft3"])
+
+
+# ---- folder -------------------------------------------------------------------------
+
+def _discover(folder: Path, profile, params, add):
+    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CSV_EXT | EXCEL_EXT)
+    found: dict[str, list] = {}
+    if profile and profile.files:
+        for table, pattern in profile.files.items():
+            hits = sorted(folder.glob(pattern))
+            if hits:
+                found[table] = hits
+        return found
+    for p in files:
+        h = read_headers(p)
+        scores = []
+        for table in TABLES:
+            m = suggest_mapping(h, table, params)
+            if not m.missing_required:
+                scores.append((len(m.mapping), table))
+        scores.sort(reverse=True)
+        if not scores:
+            add("", "unrecognised_file", "warn", f"{p.name} does not look like any table; ignored.")
+        elif len(scores) > 1 and scores[0][0] == scores[1][0]:
+            add("", "ambiguous_file", "block", f"{p.name} could be {scores[0][1]} or {scores[1][1]}; "
+                "list it under files: in a WMS profile.")
+        else:
+            found.setdefault(scores[0][1], []).append(p)
+    return found
+
+
+def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParams | None = None,
+                  accept=(), strict: bool = True) -> IngestResult:
+    folder = Path(folder)
+    params = params or IngestParams()
+    accepted = set(accept)
+    issues: list[Issue] = []
+
+    def add(table, code, severity, message):
+        if severity == "block" and code in accepted:
+            severity = "accepted"
+        issues.append(Issue(table, code, severity, message))
+
+    found = _discover(folder, profile, params, add)
+    tables, rejects, units, mappings, sources, dfmt = {}, {}, [], {}, {}, {}
+    for table in TABLES:
+        if table not in found:
+            add(table, "table_missing", "block" if table in REQUIRED_TABLES else "warn",
+                f"No {table} file found in {folder}.")
+            continue
+        r = ingest_table(found[table], table, profile, params, accept)
+        issues += r.issues
+        sources[table] = ", ".join(r.paths)
+        if r.mapping is not None:
+            mappings[table] = r.mapping
+        if r.table is not None:
+            tables[table], rejects[table] = r.table, r.rejects
+            if r.date_format:
+                dfmt[table] = r.date_format
+        if r.units is not None and len(r.units):
+            units.append(r.units.assign(table=table))
+    res = IngestResult(tables, rejects, issues_frame(issues),
+                       pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt)
+    if strict and res.blocked:
+        raise IngestError(res)
+    return res
+
+
+def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
+    """A WMS profile draft from what this run used — review it, then save it."""
+    u = result.units
+    units = {}
+    if len(u):
+        r = u.iloc[0]
+        units = {"length": r["length"], "weight": r["weight"]}
+    fmts = set(result.date_formats.values())
+    return WmsProfile(name=name, units=units, date_format=fmts.pop() if len(fmts) == 1 else None,
+                      files={t: Path(p.split(", ")[0]).name for t, p in result.sources.items()},
+                      columns={t: dict(m.mapping) for t, m in result.mappings.items()})
+
+
+def write_outputs(result: IngestResult, out_dir) -> Path:
+    """Canonical tables as Parquet, plus issues, units, rejects and a WMS profile draft."""
+    import duckdb
+    out = Path(out_dir)
+    (out / "rejects").mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    for name, df in result.tables.items():
+        con.register("t", df)
+        target = (out / f"{name}.parquet").as_posix().replace("'", "''")
+        con.execute(f"COPY t TO '{target}' (FORMAT parquet)")
+        con.unregister("t")
+    for name, df in result.rejects.items():
+        if len(df):
+            df.to_csv(out / "rejects" / f"{name}.csv", index=False, encoding="utf-8")
+    result.issues.to_csv(out / "issues.csv", index=False, encoding="utf-8")
+    result.units.to_csv(out / "units.csv", index=False, encoding="utf-8")
+    save_wms_profile(profile_from_result(result, "draft"), out / "wms_profile_draft.yaml")
+    con.close()
+    return out

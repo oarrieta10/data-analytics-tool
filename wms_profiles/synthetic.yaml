@@ -1,0 +1,43 @@
+# Column layout of gtpfit.synth exports; stands in for a client WMS.
+name: synthetic
+description: gtpfit.synth client-style export (US units, month-first dates)
+units: {length: in, weight: lb}
+date_format: "%m/%d/%Y"
+files:
+  item_master: "item_master*.csv"
+  orders: "orders*.csv"
+  receipts: "receipts*.csv"
+  inventory: "inventory_snapshots*.csv"
+columns:
+  item_master:
+    sku: Item Number
+    description: Item Description
+    category: Category
+    subcategory: Sub Category
+    unit_l: Unit Length
+    unit_w: Unit Width
+    unit_h: Unit Height
+    unit_weight: Unit Weight
+    case_qty: Case Pack
+    case_l: Case Length
+    case_w: Case Width
+    case_h: Case Height
+    case_weight: Case Weight
+  orders:
+    order_id: Order Nbr
+    order_date: Order Date
+    sku: Item Number
+    qty: Qty Shipped
+    pick_secs: Pick Time
+    channel: Channel
+  receipts:
+    receipt_id: Receipt Nbr
+    po: PO Nbr
+    receipt_date: Receipt Date
+    sku: Item Number
+    qty: Qty Received
+  inventory:
+    snapshot_date: Snapshot Date
+    sku: Item Number
+    location: Location
+    on_hand: On Hand Qty
