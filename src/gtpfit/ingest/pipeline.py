@@ -48,6 +48,7 @@ class TableResult:
     rejects: pd.DataFrame | None = None
     issues: list = field(default_factory=list)
     units: pd.DataFrame | None = None
+    unit_evidence: pd.DataFrame | None = None   # every unit pair tried, with implied medians
     mapping: Mapping | None = None
     date_format: str | None = None
 
@@ -65,6 +66,7 @@ class IngestResult:
     mappings: dict
     sources: dict
     date_formats: dict
+    unit_evidence: pd.DataFrame | None = None
 
     @property
     def blocked(self) -> bool:
@@ -237,7 +239,7 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
 
     # -- units (item master)
     if table == "item_master":
-        out, res.units = _units(out, m, profile, params, add)
+        out, res.units, res.unit_evidence = _units(out, m, profile, params, add)
 
     # -- dates: range, gaps, closures
     dfield = _DATE_FIELD.get(table)
@@ -269,7 +271,7 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
 
 
 def _units(out, m, profile, params, add):
-    rows = []
+    rows, evidence = [], []
     for g in ("unit", "case"):
         gf = [f for f in TABLES["item_master"] if f.group == g and f.name in out]
         if not gf:
@@ -281,12 +283,14 @@ def _units(out, m, profile, params, add):
             hints = {header_unit(m.mapping[f.name], kind) for f in gf if f.kind == kind} - {None}
             if len(hints) > 1:
                 add("unit_conflict", "block", f"{g} {kind} headers name different units {sorted(hints)}.")
-                return out, pd.DataFrame(rows)
+                return out, pd.DataFrame(rows), pd.DataFrame()
             if hints:
                 decl[kind] = (hints.pop(), "header")
             elif profile and profile.units.get(kind):
                 decl[kind] = (profile.units[kind], "profile")
         a = assess(out, dims if len(dims) == 3 else [], wt, g, params)
+        evidence.append(a.assign(group=g, declared_length=decl.get("length", (None,))[0],
+                                 declared_weight=decl.get("weight", (None,))[0]))
         cand = a
         for kind in ("length", "weight"):
             if kind in decl:
@@ -334,7 +338,7 @@ def _units(out, m, profile, params, add):
                          plausible=bool(chosen.plausible), median_longest_in=chosen.median_longest_in,
                          median_density_lb_ft3=chosen.median_density_lb_ft3))
     return out, pd.DataFrame(rows, columns=["group", "length", "weight", "method", "plausible",
-                                            "median_longest_in", "median_density_lb_ft3"])
+                                            "median_longest_in", "median_density_lb_ft3"]),         (pd.concat(evidence, ignore_index=True) if evidence else pd.DataFrame())
 
 
 # ---- folder -------------------------------------------------------------------------
@@ -379,7 +383,7 @@ def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParam
         issues.append(Issue(table, code, severity, message))
 
     found = _discover(folder, profile, params, add)
-    tables, rejects, units, mappings, sources, dfmt = {}, {}, [], {}, {}, {}
+    tables, rejects, units, mappings, sources, dfmt, evid = {}, {}, [], {}, {}, {}, None
     for table in TABLES:
         if table not in found:
             add(table, "table_missing", "block" if table in REQUIRED_TABLES else "warn",
@@ -396,8 +400,11 @@ def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParam
                 dfmt[table] = r.date_format
         if r.units is not None and len(r.units):
             units.append(r.units.assign(table=table))
+        if r.unit_evidence is not None and len(r.unit_evidence):
+            evid = r.unit_evidence
     res = IngestResult(tables, rejects, issues_frame(issues),
-                       pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt)
+                       pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt,
+                       evid)
     if strict and res.blocked:
         raise IngestError(res)
     return res

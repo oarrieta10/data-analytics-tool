@@ -26,11 +26,14 @@ interactive HTML report.
   - `read.py` CSV (DuckDB) / XLSX as text · `mapping.py` auto-match + WMS profiles
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision
   - `checks.py` issue record, gaps · `pipeline.py` ingest_table / ingest_folder / write_outputs
+- `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
 - `profiles/` — YAML profiles for synthetic clients (`default`, `messy_large`, `playground`)
 - `wms_profiles/` — saved column mappings per client WMS (`synthetic.yaml` for synth exports)
 - `tests/` — pytest; run `python -m pytest -q`
 
 ## Planned modules (build in this order; tests first for each)
+After each module: add its page to the workbench with live parameter controls, launch it, and let
+the user inspect and play with it before starting the next module.
 1. ~~`ingest/`~~ (done) — column mapping (saved per-WMS profiles), unit detection, type coercion, refusal of
    silent problems (Excel row limit, date gaps, negative qty). DuckDB for large files.
 2. `quality/` — data score weighted by lines/units/cube; placeholder, physics and outlier checks.
@@ -49,7 +52,8 @@ interactive HTML report.
 
 ## Commands
 ```
-pip install -e .[dev]
+pip install -e .[dev,app]
+python -m gtpfit.app                                                    # workbench, localhost:8501
 python -m gtpfit.synth --out data/synthetic/default                     # generate + report
 python -m gtpfit.synth --profile profiles/messy_large.yaml --out data/synthetic/messy_large
 python -m gtpfit.synth --out data/synthetic/default --report-only

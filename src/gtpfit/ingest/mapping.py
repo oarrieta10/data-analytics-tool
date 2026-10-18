@@ -122,7 +122,10 @@ class WmsProfile:
 
 
 def load_wms_profile(path) -> WmsProfile:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return parse_wms_profile(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})
+
+
+def parse_wms_profile(data: dict) -> WmsProfile:
     known = set(WmsProfile.__dataclass_fields__)
     bad = set(data) - known
     if bad:
