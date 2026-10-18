@@ -106,3 +106,10 @@ def test_excel_truncation_clips_orders(tmp_path, monkeypatch):
                                 truncate_orders_at_excel_limit=True), tmp_path)
     assert m["orders_truncated_at_excel_limit"] is True
     assert len(pd.read_csv(tmp_path / "orders.csv")) == 5000
+
+
+def test_report_html_has_no_mojibake(ds):
+    from gtpfit.synth.qa import write_report
+    html = Path(write_report(ds)).read_text(encoding="utf-8")
+    # UTF-8 read as cp1252 turns "–", "✓", "×" into "â€“", "âœ“", "Ã—"
+    assert not any(bad in html for bad in ("â€", "âœ", "Ã")), "report text is double-encoded"

@@ -105,5 +105,5 @@ def generate(p: Profile, out_dir: str | Path) -> dict:
                     snapshot_rows=len(s_out), planted_defect_records=len(log)),
         orders_truncated_at_excel_limit=truncated,
         files={k: v.name for k, v in files.items()})
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
     return manifest

@@ -125,8 +125,8 @@ def realism_checks(out_dir):
 def write_report(out_dir) -> Path:
     d = Path(out_dir)
     checks, charts = realism_checks(d)
-    manifest = json.loads((d / "manifest.json").read_text())
-    tpl = (Path(__file__).parent / "qa_template.html").read_text()
+    manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    tpl = (Path(__file__).parent / "qa_template.html").read_text(encoding="utf-8")
     payload = dict(checks=checks.to_dict("records"), charts=charts,
                    profile=manifest["profile"], counts=manifest["counts"])
     out = d / "synthetic_data_report.html"

@@ -94,7 +94,7 @@ class Profile:
 def load_profile(path: str | Path | None = None, **overrides) -> Profile:
     data: dict = {}
     if path:
-        data = yaml.safe_load(Path(path).read_text()) or {}
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     data.update(overrides)
     defect_data = data.pop("defects", {}) or {}
     known = {f.name for f in fields(Profile)}
