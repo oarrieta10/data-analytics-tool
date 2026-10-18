@@ -24,6 +24,7 @@ CHECKS = [
     ("lines_per_order", "E-commerce lines per order", 1.5, 2.5, "num"),
     ("design_ratio", "Design day (95th percentile) / average day", 1.3, 1.8, "x"),
     ("peak_ratio", "Peak day / average day", 2.0, 4.0, "x"),
+    ("peak_basket", "E-commerce lines per order, top-5% days / other days", 1.0, 1.3, "x"),
     ("active_share", "Item-master SKUs picked during the year", 0.75, 0.95, "pct"),
     ("median_doh", "Median days on hand, SKUs that sell", 15, 60, "num"),
     ("turns", "Inventory turns per year", 6, 15, "num"),
@@ -59,6 +60,11 @@ def realism_checks(out_dir):
     daily = o.groupby("date").size()
     v["design_ratio"] = daily.quantile(0.95) / daily.mean()
     v["peak_ratio"] = daily.max() / daily.mean()
+    # basket size on design-day-or-busier days vs the rest (same day split as design_ratio)
+    busy = daily.index[daily >= daily.quantile(0.95)]
+    ec_day = o[o["Channel"] == "Ecommerce"].groupby("Order Nbr").agg(l=("sku", "size"), date=("date", "first"))
+    on_busy = ec_day["date"].isin(busy)
+    v["peak_basket"] = ec_day.loc[on_busy, "l"].mean() / ec_day.loc[~on_busy, "l"].mean()
     v["active_share"] = im["Item Number"].isin(lines.index).sum() / im["Item Number"].nunique()
     units_day = o.groupby("sku")["Qty Shipped"].sum() / o["date"].nunique()
     avg_oh = inv.groupby("Item Number")["On Hand Qty"].mean()

@@ -16,17 +16,32 @@ n_skus: 3000
 ecom_orders_per_day: 500
 # ecom_single_line_share: 0.55
 # ecom_single_unit_share: 0.82
+# ecom_extra_units_geom_p: 0.6   # lower = more units on multi-unit lines
 
 # --- store / B2B replenishment (weekdays only) ---
 b2b_orders_per_day: 15
 # b2b_lines_mean: 22
 # b2b_full_case_share: 0.5
+# b2b_full_case_multiple_geom_p: 0.6
+# b2b_volume_cap: 1.3            # store orders don't follow e-com promos past this
 
 # --- calendar / peaks ---
 # weekday_factors: [1.15, 1.10, 1.05, 1.00, 0.95, 0.70, 0.50]   # Mon..Sun
 # q4_ramp: 0.35                  # December uplift vs base
 # promo_days: {black_friday: 2.6, cyber_monday: 2.3, mid_july_sale: 1.8}
 # daily_noise_cv: 0.08
+
+# --- peak-day basket shape (e-commerce) ---
+# Values that apply on a day with event lift = reference_lift (season x promo).
+# Interpolated from the base values above; equal to base = no change;
+# the other side of base = smaller baskets on peaks.
+# peak_shape:
+#   reference_lift: 2.0
+#   max_t: 1.0                   # >1 lets bigger events (Black Friday ~3.5x) go further
+#   ecom_single_line_share: 0.45
+#   ecom_multi_line_geom_p: 0.42
+#   ecom_single_unit_share: 0.75
+#   ecom_extra_units_geom_p: 0.50
 
 # --- inventory policy ---
 # cover_days: {A: 14, B: 30, C: 45, D: 60}

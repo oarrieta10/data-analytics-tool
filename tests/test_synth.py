@@ -113,3 +113,83 @@ def test_report_html_has_no_mojibake(ds):
     html = Path(write_report(ds)).read_text(encoding="utf-8")
     # UTF-8 read as cp1252 turns "–", "✓", "×" into "â€“", "âœ“", "Ã—"
     assert not any(bad in html for bad in ("â€", "âœ", "Ã")), "report text is double-encoded"
+
+
+# ---- peak-day order shape -------------------------------------------------
+
+SHAPE_COLS = ["ecom_single_line_share", "ecom_multi_line_geom_p",
+              "ecom_single_unit_share", "ecom_extra_units_geom_p"]
+
+
+def _lift_cal(lifts):
+    return pd.DataFrame({"event_lift": np.asarray(lifts, float)})
+
+
+def _neutral_profile():
+    p = load_profile()
+    return load_profile(peak_shape={c: getattr(p, c) for c in SHAPE_COLS})
+
+
+def test_day_shape_neutral_is_constant_base():
+    from gtpfit.synth.demand import day_shape
+    p = _neutral_profile()
+    s = day_shape(p, _lift_cal([0.9, 1.0, 1.35, 2.6, 10]))
+    for c in SHAPE_COLS:
+        assert (s[c] == getattr(p, c)).all(), c
+
+
+def test_day_shape_default_bigger_baskets_on_peak():
+    from gtpfit.synth.demand import day_shape
+    p = load_profile()
+    lifts = [0.8, 1.0, 1.2, 1.6, 2.0, 2.6, 50]
+    s = day_shape(p, _lift_cal(lifts))
+    # quiet days use the base values exactly
+    for c in SHAPE_COLS:
+        assert s[c].iloc[0] == s[c].iloc[1] == getattr(p, c)
+    # at the reference lift the "at reference" values apply
+    for c in SHAPE_COLS:
+        assert s[c].iloc[4] == pytest.approx(getattr(p.peak_shape, c))
+    # every probability falls as lift rises (fewer single lines/units, longer tails)
+    for c in SHAPE_COLS:
+        assert s[c].is_monotonic_decreasing, c
+    # extreme lift is capped at max_t
+    t_max = p.peak_shape.max_t
+    exp = p.ecom_single_line_share + (p.peak_shape.ecom_single_line_share - p.ecom_single_line_share) * t_max
+    assert s["ecom_single_line_share"].iloc[-1] == pytest.approx(max(exp, 0.01))
+    assert s[SHAPE_COLS].ge(0.01).all().all() and s[SHAPE_COLS].le(0.99).all().all()
+
+
+def test_day_shape_direction_can_flip():
+    from gtpfit.synth.demand import day_shape
+    p = load_profile(peak_shape=dict(ecom_single_line_share=0.65, ecom_single_unit_share=0.90))
+    s = day_shape(p, _lift_cal([1.0, 2.0]))
+    assert s["ecom_single_line_share"].is_monotonic_increasing
+    assert s["ecom_single_unit_share"].iloc[1] == pytest.approx(0.90)
+
+
+def test_unknown_peak_shape_key_rejected():
+    with pytest.raises(ValueError, match="peak_shape"):
+        load_profile(peak_shape=dict(ecom_single_lines=0.4))
+
+
+def test_peak_days_have_bigger_ecom_baskets(tmp_path):
+    generate(load_profile(n_skus=300, ecom_orders_per_day=400, b2b_orders_per_day=2,
+                          start_date="2025-10-01", days=90), tmp_path)
+    cal = pd.read_csv(tmp_path / "_truth/calendar.csv")
+    assert set(SHAPE_COLS + ["event_lift"]) <= set(cal.columns)
+    cal["date"] = pd.to_datetime(cal["date"])
+    open_ = cal[~cal["closed"]]
+    peak = set(open_.nlargest(2, "event_lift")["date"])           # Black Friday, Cyber Monday
+    quiet = set(open_.nsmallest(20, "event_lift")["date"])        # early October
+    o = pd.read_csv(tmp_path / "orders.csv", dtype={"Item Number": str})
+    o = o[o["Channel"] == "Ecommerce"]
+    o["date"] = pd.to_datetime(o["Order Date"], format="%m/%d/%Y")
+    per = o.groupby(["date", "Order Nbr"]).agg(l=("Item Number", "size"), u=("Qty Shipped", "sum")).reset_index()
+
+    def shape(days):
+        x = per[per["date"].isin(days)]
+        return (x["l"] == 1).mean(), x["u"].sum() / x["l"].sum()
+
+    (sl_peak, upl_peak), (sl_quiet, upl_quiet) = shape(peak), shape(quiet)
+    assert sl_quiet - sl_peak > 0.08, (sl_quiet, sl_peak)
+    assert upl_peak - upl_quiet > 0.15, (upl_quiet, upl_peak)

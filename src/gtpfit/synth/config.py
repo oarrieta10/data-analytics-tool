@@ -3,6 +3,9 @@
 A profile is a plain YAML file (see profiles/). Anything left out keeps the
 default below, so a profile only needs to state what makes that client
 different.  Units: inches, pounds, days.
+
+Nested sections (`defects:`, `peak_shape:`) work the same way: list only the
+keys you want to change.
 """
 from __future__ import annotations
 
@@ -41,6 +44,28 @@ class DefectRates:
 
 
 @dataclass
+class PeakShape:
+    """E-commerce basket shape on event days (promotions, Q4 ramp).
+
+    Each value is what the matching Profile setting becomes on a day whose
+    event lift (season x promo, not weekday or noise) equals `reference_lift`.
+    In between, the setting is interpolated linearly from its base value; on
+    bigger events it is extrapolated up to `max_t` times the reference step
+    (default 1: none, because Black Friday's lift stacks promo on the Q4 ramp).
+    Days with lift <= 1 use the base values.  Set a value equal to its base to
+    switch that effect off; move it the other way for smaller peak baskets.
+    Defaults lean to bigger baskets on peak days (consultant judgement, low
+    confidence; varies by client).
+    """
+    reference_lift: float = 2.0
+    max_t: float = 1.0                     # 1 = events above reference_lift get the reference shape
+    ecom_single_line_share: float = 0.45   # base 0.55: fewer single-line orders
+    ecom_multi_line_geom_p: float = 0.42   # base 0.50: longer multi-line orders
+    ecom_single_unit_share: float = 0.75   # base 0.82: more multi-unit lines
+    ecom_extra_units_geom_p: float = 0.50  # base 0.60: more units when > 1
+
+
+@dataclass
 class Profile:
     name: str = "default"
     seed: int = 20261015
@@ -59,11 +84,14 @@ class Profile:
     ecom_single_line_share: float = 0.55
     ecom_multi_line_geom_p: float = 0.5  # extra lines beyond 1 ~ geometric
     ecom_single_unit_share: float = 0.82
+    ecom_extra_units_geom_p: float = 0.6   # units beyond 1 ~ geometric
 
     # store / B2B replenishment channel
     b2b_orders_per_day: float = 30.0     # weekdays only
     b2b_lines_mean: float = 22.0
     b2b_full_case_share: float = 0.5
+    b2b_full_case_multiple_geom_p: float = 0.6  # cases per full-case line ~ geometric
+    b2b_volume_cap: float = 1.3          # store orders don't follow e-com promos past this
     b2b_popularity_flatten: float = 0.7  # p^x, <1 spreads demand to slow movers
 
     # calendar
@@ -81,6 +109,7 @@ class Profile:
     n_suppliers: int = 60
 
     defects: DefectRates = field(default_factory=DefectRates)
+    peak_shape: PeakShape = field(default_factory=PeakShape)
     truncate_orders_at_excel_limit: bool = False  # simulate a clipped export
 
     @property
@@ -91,18 +120,23 @@ class Profile:
         return asdict(self)
 
 
+_SECTIONS = {"defects": DefectRates, "peak_shape": PeakShape}
+
+
 def load_profile(path: str | Path | None = None, **overrides) -> Profile:
     data: dict = {}
     if path:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     data.update(overrides)
-    defect_data = data.pop("defects", {}) or {}
+    sections = {}
+    for key, cls in _SECTIONS.items():
+        sub = data.pop(key, {}) or {}
+        bad = set(sub) - {f.name for f in fields(cls)}
+        if bad:
+            raise ValueError(f"Unknown {key} keys: {sorted(bad)}")
+        sections[key] = cls(**sub)
     known = {f.name for f in fields(Profile)}
     unknown = set(data) - known
     if unknown:
         raise ValueError(f"Unknown profile keys: {sorted(unknown)}")
-    known_def = {f.name for f in fields(DefectRates)}
-    bad = set(defect_data) - known_def
-    if bad:
-        raise ValueError(f"Unknown defect keys: {sorted(bad)}")
-    return Profile(**data, defects=DefectRates(**defect_data))
+    return Profile(**data, **sections)

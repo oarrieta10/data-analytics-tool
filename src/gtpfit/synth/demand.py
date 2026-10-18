@@ -8,6 +8,11 @@ Two channels share one catalogue:
   spread wider across the catalogue (slow movers get ordered too).
 
 Daily volume = base x weekday factor x annual season x promotions x noise.
+Event lift = season x promotions (weekday and noise left out).  It drives the
+e-commerce basket shape: on event days the single-line and single-unit shares
+and the multi-line / multi-unit tails move towards `profile.peak_shape`
+(`day_shape`).  The effective values per day go into the calendar, which is
+written to _truth/calendar.csv.  Store orders keep one shape all year.
 Each SKU's share of a day's lines = popularity x lifecycle x its category's
 seasonality, so toys peak in December and sporting goods in summer.
 """
@@ -55,7 +60,29 @@ def build_calendar(p, rng: np.random.Generator) -> pd.DataFrame:
     closed = np.array([d.strftime("%m-%d") in p.closed_dates for d in dates])
     mult = factor * season * promo * noise
     mult[closed] = 0
-    return pd.DataFrame(dict(date=dates, doy=doy, weekday=wd, volume_factor=mult, closed=closed))
+    cal = pd.DataFrame(dict(date=dates, doy=doy, weekday=wd, volume_factor=mult, closed=closed,
+                            event_lift=season * promo))
+    return pd.concat([cal, day_shape(p, cal)], axis=1)
+
+
+_SHAPE = ["ecom_single_line_share", "ecom_multi_line_geom_p", "ecom_single_unit_share", "ecom_extra_units_geom_p"]
+_P_MIN, _P_MAX = 0.01, 0.99  # keep interpolated probabilities valid
+
+
+def day_shape(p, cal: pd.DataFrame) -> pd.DataFrame:
+    """Effective e-commerce basket settings per day, from the day's event lift.
+
+    t = clip((lift - 1) / (reference_lift - 1), 0, max_t);
+    value = base + (value_at_reference - base) * t, clamped to a valid probability.
+    """
+    ps = p.peak_shape
+    t = np.clip((cal["event_lift"].to_numpy(float) - 1) / (ps.reference_lift - 1), 0, ps.max_t)
+    out = {}
+    for c in _SHAPE:
+        base = getattr(p, c)
+        out[c] = np.clip(base + (getattr(ps, c) - base) * t, _P_MIN, _P_MAX)
+        out[c][t == 0] = base  # quiet days: exactly the base value
+    return pd.DataFrame(out, index=cal.index)
 
 
 def _sku_day_weights(im: pd.DataFrame, cal: pd.DataFrame) -> np.ndarray:
@@ -91,21 +118,23 @@ def build_orders(p, im: pd.DataFrame, cal: pd.DataFrame, rng: np.random.Generato
         if w.sum() == 0:
             continue
         pe = w / w.sum()
+        sh = cal.iloc[d]
         # --- e-commerce
         n_o = rng.poisson(p.ecom_orders_per_day * vf)
-        k = np.where(rng.random(n_o) < p.ecom_single_line_share, 1,
-                     1 + rng.geometric(p.ecom_multi_line_geom_p, n_o))
+        k = np.where(rng.random(n_o) < sh["ecom_single_line_share"], 1,
+                     1 + rng.geometric(sh["ecom_multi_line_geom_p"], n_o))
         n_l = int(k.sum())
         oid = np.repeat(np.arange(ec_seq, ec_seq + n_o), k)
         ec_seq += n_o
         idx = rng.choice(len(skus), size=n_l, p=pe)
-        units = np.where(rng.random(n_l) < p.ecom_single_unit_share, 1, 1 + rng.geometric(0.6, n_l))
+        units = np.where(rng.random(n_l) < sh["ecom_single_unit_share"], 1,
+                         1 + rng.geometric(sh["ecom_extra_units_geom_p"], n_l))
         t = np.repeat(_times(rng, _ECOM_HOURS, n_o), k)
         frames.append(pd.DataFrame(dict(day=d, order=np.char.add("EC", oid.astype(str)),
                                         channel="Ecommerce", sku_idx=idx, units=units, secs=t)))
         # --- store replenishment, weekdays only
         if cal["weekday"].iat[d] < 5:
-            n_b = rng.poisson(p.b2b_orders_per_day * min(vf, 1.3))
+            n_b = rng.poisson(p.b2b_orders_per_day * min(vf, p.b2b_volume_cap))
             if n_b:
                 kb = 3 + rng.negative_binomial(2, 2 / (2 + p.b2b_lines_mean - 3), n_b)
                 pb = pe ** p.b2b_popularity_flatten
@@ -116,7 +145,7 @@ def build_orders(p, im: pd.DataFrame, cal: pd.DataFrame, rng: np.random.Generato
                 idxb = rng.choice(len(skus), size=nlb, p=pb)
                 cq = case_qty[idxb]
                 full = rng.random(nlb) < p.b2b_full_case_share
-                ub = np.where(full, cq * rng.geometric(0.6, nlb),
+                ub = np.where(full, cq * rng.geometric(p.b2b_full_case_multiple_geom_p, nlb),
                               np.maximum(1, (cq * rng.uniform(0.1, 0.9, nlb)).astype(int)))
                 tb = np.repeat(_times(rng, _B2B_HOURS, n_b), kb)
                 frames.append(pd.DataFrame(dict(day=d, order=np.char.add("ST", oidb.astype(str)),
