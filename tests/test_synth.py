@@ -193,3 +193,58 @@ def test_peak_days_have_bigger_ecom_baskets(tmp_path):
     (sl_peak, upl_peak), (sl_quiet, upl_quiet) = shape(peak), shape(quiet)
     assert sl_quiet - sl_peak > 0.08, (sl_quiet, sl_peak)
     assert upl_peak - upl_quiet > 0.15, (upl_quiet, upl_peak)
+
+
+# ---- config metadata, diff, estimate (drive the workbench form) ------------
+
+def _all_fields():
+    import dataclasses
+    from gtpfit.synth.config import DefectRates, PeakShape, Profile
+    for cls in (Profile, DefectRates, PeakShape):
+        for f in dataclasses.fields(cls):
+            if f.name in ("defects", "peak_shape"):
+                continue
+            yield cls, f
+
+
+def test_every_setting_has_ui_metadata():
+    from gtpfit.synth.config import SECTIONS
+    p = load_profile()
+    for cls, f in _all_fields():
+        md = f.metadata
+        assert md.get("label") and md.get("help") and md.get("section") in SECTIONS, (cls.__name__, f.name)
+        lo, hi = md.get("lo"), md.get("hi")
+        if lo is not None and hi is not None:
+            obj = {"Profile": p, "DefectRates": p.defects, "PeakShape": p.peak_shape}[cls.__name__]
+            v = getattr(obj, f.name)
+            vals = v.values() if isinstance(v, dict) else (v if isinstance(v, list) else [v])
+            assert all(lo <= x <= hi for x in vals), (f.name, v, lo, hi)
+
+
+@pytest.mark.parametrize("name", [None, "default", "messy_large", "playground"])
+def test_profile_diff_roundtrip(name):
+    from gtpfit.synth.config import profile_diff, profile_yaml
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    p = load_profile(root / "profiles" / f"{name}.yaml") if name else load_profile()
+    d = profile_diff(p)
+    assert load_profile(**d) == p
+    assert load_profile(**yaml.safe_load(profile_yaml(p))) == p
+    if name is None:
+        assert d == {}
+
+
+def test_estimate_close_to_generated(tmp_path):
+    from gtpfit.synth.preview import estimate
+    p = load_profile(n_skus=800, ecom_orders_per_day=300, b2b_orders_per_day=10, days=200)
+    est = estimate(p)
+    m = generate(p, tmp_path)
+    for k in ("order_lines", "orders"):
+        assert abs(est[k] / m["counts"][k] - 1) < 0.10, (k, est[k], m["counts"][k])
+
+
+def test_preview_has_daily_shape():
+    from gtpfit.synth.preview import preview
+    cal = preview(load_profile(start_date="2025-10-01", days=90))
+    assert len(cal) == 90 and {"volume_factor", "event_lift", "ecom_single_line_share"} <= set(cal.columns)
+    assert cal["ecom_single_line_share"].min() < load_profile().ecom_single_line_share

@@ -6,7 +6,7 @@ seed: 1
 # days: 365
 
 # --- catalogue ---
-n_skus: 3000
+n_skus: 25000
 # share_inventory_only: 0.06     # dead stock: stocked, never ordered
 # share_new_in_year: 0.12
 # share_discontinued: 0.08
