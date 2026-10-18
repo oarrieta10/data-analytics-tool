@@ -1,0 +1,9 @@
+# Default synthetic client: mid-size e-commerce + store replenishment, one year.
+# Anything not listed keeps the default in src/gtpfit/synth/config.py.
+name: default
+seed: 20261015
+start_date: "2025-01-01"
+days: 365
+n_skus: 8000
+ecom_orders_per_day: 1200
+b2b_orders_per_day: 30

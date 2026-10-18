@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthetic Dataset Check</title>
+<style>
+:root{
+  --bg:#f4f5f3;--panel:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#7a7974;--rule:#e2e1dc;--grid:#ecebe7;
+  --s1:#2a78d6;--s2:#eb6834;--good:#0ca30c;--warn:#fab219;--crit:#d03b3b;--band:#e3edf9;
+  --body:'Segoe UI',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#121211;--panel:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--muted:#97968e;--rule:#2e2e2b;--grid:#262624;
+  --s1:#3987e5;--s2:#d95926;--band:#1d2b3d}}
+:root[data-theme="dark"]{--bg:#121211;--panel:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--muted:#97968e;--rule:#2e2e2b;--grid:#262624;
+  --s1:#3987e5;--s2:#d95926;--band:#1d2b3d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--body)}
+main{max-width:1080px;margin:0 auto;padding:28px 16px 64px}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:19px;margin:36px 0 4px}
+.sub{color:var(--ink2);margin:0 0 4px}
+.lede{color:var(--ink2);max-width:760px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:20px 0 4px}
+.kpi{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px 14px}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--ink2);font-size:13px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;margin-top:14px}
+.card h3{margin:0;font-size:15px}
+.card p.note{margin:2px 0 10px;color:var(--ink2);font-size:13px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:600;color:var(--ink2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--rule)}
+td{padding:8px;border-bottom:1px solid var(--grid);vertical-align:middle}
+td.num{text-align:right;white-space:nowrap}
+.status{display:inline-flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{fill:var(--ink2);font:12px var(--body)}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--ink2);margin:0 0 6px}
+.legend i{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+#tip{position:fixed;pointer-events:none;background:var(--panel);color:var(--ink);border:1px solid var(--rule);
+  border-radius:6px;padding:6px 9px;font-size:12.5px;box-shadow:0 4px 14px rgba(0,0,0,.12);opacity:0;transition:opacity .08s;z-index:10;max-width:260px}
+.scroll{overflow-x:auto}
+.warn{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--rule);border-left:4px solid var(--warn);background:var(--panel);border-radius:8px;padding:12px 14px;margin-top:16px}
+footer{margin-top:40px;color:var(--muted);font-size:12.5px}
+code{font-size:12.5px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Synthetic dataset check</h1>
+  <p class="sub" id="sub"></p>
+  <p class="lede">A generated client dataset for building and testing the goods-to-person fit tool. It contains no real
+  client data. The checks below ask one question: does its shape look like a real mid-size e-commerce and store-replenishment
+  warehouse? The ranges are rules of thumb, not published standards.</p>
+  <div id="warn"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <h2>Realism scorecard</h2>
+  <div class="card scroll"><table id="checks"><thead><tr><th>Check</th><th style="text-align:right">Value</th><th>Typical range</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+
+  <h2>Demand shape</h2>
+  <div class="grid2">
+    <div class="card"><h3>SKU Pareto curve</h3><p class="note">Share of lines picked from the top x% of SKUs.</p><div id="pareto"></div></div>
+    <div class="card"><h3>E-commerce lines per order</h3><p class="note">Orders by number of lines.</p><div id="lpo"></div></div>
+  </div>
+  <div class="card"><h3>Lines picked per day</h3><p class="note">Weekly rhythm, a mid-July sale, Black Friday / Cyber Monday and a December ramp.</p>
+    <div class="legend" id="dailyLegend"></div><div id="daily"></div></div>
+  <div class="card"><h3>Lines picked by hour of day</h3><p class="note">E-commerce runs in two waves; store orders are picked in the morning.</p>
+    <div class="legend" id="hoursLegend"></div><div id="hours"></div></div>
+
+  <h2>Item attributes</h2>
+  <div class="card"><h3>Unit cube by category (true values)</h3><p class="note">Line: 10th to 90th percentile. Dot: median. Log scale, cubic feet.</p><div id="cube"></div></div>
+
+  <h2>Planted data problems (the answer key)</h2>
+  <p class="lede">Every problem below was planted on purpose and recorded in <code>_truth/defects.csv</code> with the true and the
+  observed value. The data-quality engine will be scored on how many of them it finds, and the backfill on how close it gets to the true values.</p>
+  <div class="card scroll"><table id="defects"><thead><tr><th>Problem</th><th style="text-align:right">SKUs</th><th>Share of lines touched</th></tr></thead><tbody></tbody></table></div>
+  <div class="card"><h3>Transaction-file problems</h3><p class="note" id="txnote"></p></div>
+
+  <footer id="foot"></footer>
+</main>
+<div id="tip"></div>
+<script>
+const D = /*__DATA__*/null;
+const $ = (id) => document.getElementById(id);
+const fmtInt = (v) => Math.round(v).toLocaleString("en-US");
+const fmt = (v, f) => f === "pct" ? (v * 100).toFixed(1) + "%" : f === "x" ? v.toFixed(2) + "×" : v.toFixed(1);
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const NAMES = {Ecommerce: "E-commerce", Store: "Store"};
+
+// ---------- tooltip
+const tip = $("tip");
+function showTip(evt, html) { tip.innerHTML = html; tip.style.opacity = 1; moveTip(evt); }
+function moveTip(evt) { const x = Math.min(evt.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (evt.clientY + 14) + "px"; }
+function hideTip() { tip.style.opacity = 0; }
+
+function niceTicks(max, n = 4) {
+  const raw = max / n, mag = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  const t = []; let v = 0; do { t.push(v); v += step; } while (t[t.length - 1] < max - 1e-9); return t;
+}
+
+function frame(host, W, H, m) {
+  host.innerHTML = "";
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img"}, host);
+  return {svg, x0: m.l, x1: W - m.r, y0: H - m.b, y1: m.t};
+}
+
+function yAxis(f, ticks, y, fmtT) {
+  for (const t of ticks) {
+    el("line", {x1: f.x0, x2: f.x1, y1: y(t), y2: y(t), stroke: css("--grid"), "stroke-width": 1}, f.svg);
+    const tx = el("text", {x: f.x0 - 8, y: y(t) + 4, "text-anchor": "end"}, f.svg); tx.textContent = fmtT(t);
+  }
+}
+
+// ---------- header
+const T = D.charts.totals;
+if (T.excel_clipped) $("warn").innerHTML = `<div class="warn"><span aria-hidden="true">⚠</span><div><b>Warning: the order file looks clipped.</b> It has exactly
+  ${fmtInt(T.raw_rows)} data rows, which is Excel's row limit, and it stops on ${T.last}. Anything that depends on the full year
+  (peak day, seasonality, turns, active SKUs) is understated. Ask the client for the full export.</div></div>`;
+$("sub").textContent = `${T.first} to ${T.last} · profile "${D.profile.name}" · seed ${D.profile.seed}`;
+[[fmtInt(T.lines), "order lines"], [fmtInt(T.orders), "orders"], [fmtInt(T.skus), "item-master SKUs"],
+ [fmtInt(T.days), "picking days"], [fmtInt(T.receipts), "receipt lines"], [(T.store_share * 100).toFixed(0) + "%", "lines from store orders"]]
+  .forEach(([v, l]) => { $("kpis").insertAdjacentHTML("beforeend", `<div class="kpi"><b>${v}</b><span>${l}</span></div>`); });
+
+// ---------- scorecard with range strips
+(function () {
+  const tb = $("checks").querySelector("tbody");
+  for (const c of D.checks) {
+    const span = c.high - c.low, lo = c.low - span * 0.6, hi = c.high + span * 0.6;
+    const pos = (v) => Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * 160;
+    const ok = c.status === "in range";
+    const colour = ok ? "var(--good)" : "var(--warn)";
+    const icon = ok ? "✓" : (c.status === "below" ? "↓" : "↑");
+    const strip = `<svg viewBox="0 0 170 18" style="width:170px;height:18px"><rect x="${pos(c.low) + 5}" y="5" width="${pos(c.high) - pos(c.low)}" height="8" rx="4" fill="var(--band)"/>
+      <circle cx="${pos(c.value) + 5}" cy="9" r="5" fill="var(--s1)" stroke="var(--panel)" stroke-width="2"/></svg>`;
+    tb.insertAdjacentHTML("beforeend", `<tr><td>${c.label}</td><td class="num"><b>${fmt(c.value, c.fmt)}</b></td>
+      <td><div style="display:flex;align-items:center;gap:8px">${strip}<span style="color:var(--ink2);font-size:13px;white-space:nowrap">${fmt(c.low, c.fmt)} – ${fmt(c.high, c.fmt)}</span></div></td>
+      <td><span class="status"><span class="dot" style="background:${colour}"></span>${icon} ${c.status}</span></td></tr>`);
+  }
+})();
+
+// ---------- Pareto curve
+(function () {
+  const W = 480, H = 280, f = frame($("pareto"), W, H, {l: 44, r: 16, t: 12, b: 34});
+  const x = (v) => f.x0 + v * (f.x1 - f.x0), y = (v) => f.y0 - v * (f.y0 - f.y1);
+  yAxis(f, [0, .25, .5, .75, 1], y, (t) => t * 100 + "%");
+  [0, .2, .4, .6, .8, 1].forEach((t) => { const tx = el("text", {x: x(t), y: f.y0 + 18, "text-anchor": "middle"}, f.svg); tx.textContent = t * 100 + "%"; });
+  const lbl = el("text", {x: f.x1, y: f.y0 + 32, "text-anchor": "end"}, f.svg); lbl.textContent = "share of SKUs, most-picked first →";
+  const pts = D.charts.pareto;
+  el("path", {d: pts.map((p, i) => (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1)).join(""), fill: "none", stroke: css("--s1"), "stroke-width": 2}, f.svg);
+  const p20 = pts.reduce((a, b) => Math.abs(b[0] - .2) < Math.abs(a[0] - .2) ? b : a);
+  el("line", {x1: x(p20[0]), x2: x(p20[0]), y1: f.y0, y2: y(p20[1]), stroke: css("--muted"), "stroke-dasharray": "3 3"}, f.svg);
+  el("circle", {cx: x(p20[0]), cy: y(p20[1]), r: 5, fill: css("--s1"), stroke: css("--panel"), "stroke-width": 2}, f.svg);
+  const t = el("text", {x: x(p20[0]) + 10, y: y(p20[1]) + 16}, f.svg); t.textContent = `top 20% → ${(p20[1] * 100).toFixed(0)}% of lines`; t.style.fill = css("--ink");
+  const cross = el("line", {y1: f.y1, y2: f.y0, stroke: css("--muted"), opacity: 0}, f.svg);
+  const hit = el("rect", {x: f.x0, y: f.y1, width: f.x1 - f.x0, height: f.y0 - f.y1, fill: "transparent"}, f.svg);
+  hit.addEventListener("mousemove", (e) => {
+    const r = f.svg.getBoundingClientRect(), vx = ((e.clientX - r.left) / r.width * W - f.x0) / (f.x1 - f.x0);
+    const p = pts.reduce((a, b) => Math.abs(b[0] - vx) < Math.abs(a[0] - vx) ? b : a);
+    cross.setAttribute("x1", x(p[0])); cross.setAttribute("x2", x(p[0])); cross.setAttribute("opacity", .6);
+    showTip(e, `Top <b>${(p[0] * 100).toFixed(1)}%</b> of SKUs<br>${(p[1] * 100).toFixed(1)}% of lines`);
+  });
+  hit.addEventListener("mouseleave", () => { hideTip(); cross.setAttribute("opacity", 0); });
+})();
+
+// ---------- simple bar chart
+function bars(host, labels, values, opts) {
+  const W = opts.W || 480, H = opts.H || 280, f = frame(host, W, H, {l: 52, r: 12, t: 12, b: 34});
+  const max = Math.max(...values), ticks = niceTicks(max), top = ticks[ticks.length - 1];
+  const y = (v) => f.y0 - v / top * (f.y0 - f.y1);
+  yAxis(f, ticks, y, (t) => t >= 1000 ? (t / 1000) + "k" : t);
+  const bw = (f.x1 - f.x0) / labels.length;
+  labels.forEach((l, i) => {
+    const x = f.x0 + i * bw, h = f.y0 - y(values[i]), w = Math.max(bw - 2, 1);
+    const r = Math.min(4, w / 2, h);
+    el("path", {d: `M${x + 1} ${f.y0}V${f.y0 - h + r}q0 ${-r} ${r} ${-r}h${w - 2 * r}q${r} 0 ${r} ${r}V${f.y0}Z`, fill: css("--s1")}, f.svg);
+    const tx = el("text", {x: x + bw / 2, y: f.y0 + 18, "text-anchor": "middle"}, f.svg); tx.textContent = l;
+    const hit = el("rect", {x, y: f.y1, width: bw, height: f.y0 - f.y1, fill: "transparent"}, f.svg);
+    hit.addEventListener("mousemove", (e) => showTip(e, opts.tip(i)));
+    hit.addEventListener("mouseleave", hideTip);
+  });
+  if (opts.xlabel) { const t = el("text", {x: f.x1, y: f.y0 + 32, "text-anchor": "end"}, f.svg); t.textContent = opts.xlabel; }
+}
+(function () {
+  const L = D.charts.lpo, tot = L.n.reduce((a, b) => a + b, 0);
+  bars($("lpo"), L.k, L.n, {xlabel: "lines per order →", tip: (i) => `<b>${L.k[i]}</b> line${L.k[i] === "1" ? "" : "s"}<br>${fmtInt(L.n[i])} orders (${(L.n[i] / tot * 100).toFixed(1)}%)`});
+})();
+
+// ---------- legend helper
+function legend(host, keys) { host.innerHTML = keys.map((k, i) => `<span><i style="background:var(--s${i + 1})"></i>${NAMES[k] || k}</span>`).join(""); }
+
+// ---------- daily lines, two series
+(function () {
+  const S = D.charts.daily, keys = Object.keys(S.series).sort(), n = S.dates.length;
+  legend($("dailyLegend"), keys);
+  const W = 1000, H = 300, f = frame($("daily"), W, H, {l: 52, r: 70, t: 12, b: 30});
+  const max = Math.max(...keys.flatMap((k) => S.series[k])), ticks = niceTicks(max), top = ticks[ticks.length - 1];
+  const x = (i) => f.x0 + i / (n - 1) * (f.x1 - f.x0), y = (v) => f.y0 - v / top * (f.y0 - f.y1);
+  yAxis(f, ticks, y, (t) => t >= 1000 ? (t / 1000) + "k" : t);
+  S.dates.forEach((d, i) => { if (d.endsWith("-01")) { const t = el("text", {x: x(i), y: f.y0 + 18}, f.svg); t.textContent = new Date(d + "T00:00").toLocaleString("en-US", {month: "short"}); } });
+  keys.forEach((k, j) => {
+    const col = css(`--s${j + 1}`);
+    el("path", {d: S.series[k].map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(""), fill: "none", stroke: col, "stroke-width": 1.6, "stroke-linejoin": "round"}, f.svg);
+    const last = S.series[k][n - 1], t = el("text", {x: f.x1 + 6, y: y(k === "Store" ? Math.min(last, top * .1) : last) + 4}, f.svg); t.textContent = NAMES[k] || k; t.style.fill = css("--ink");
+  });
+  const cross = el("line", {y1: f.y1, y2: f.y0, stroke: css("--muted"), opacity: 0}, f.svg);
+  const hit = el("rect", {x: f.x0, y: f.y1, width: f.x1 - f.x0, height: f.y0 - f.y1, fill: "transparent"}, f.svg);
+  hit.addEventListener("mousemove", (e) => {
+    const r = f.svg.getBoundingClientRect(), i = Math.max(0, Math.min(n - 1, Math.round(((e.clientX - r.left) / r.width * W - f.x0) / (f.x1 - f.x0) * (n - 1))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("opacity", .6);
+    const day = new Date(S.dates[i] + "T00:00").toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric"});
+    showTip(e, `<b>${day}</b><br>` + keys.map((k) => `${NAMES[k] || k}: ${fmtInt(S.series[k][i])}`).join("<br>"));
+  });
+  hit.addEventListener("mouseleave", () => { hideTip(); cross.setAttribute("opacity", 0); });
+})();
+
+// ---------- hours, stacked bars with a 2px gap
+(function () {
+  const S = D.charts.hours.series, keys = Object.keys(S).sort();
+  legend($("hoursLegend"), keys);
+  const W = 1000, H = 260, f = frame($("hours"), W, H, {l: 52, r: 12, t: 12, b: 30});
+  const tot = [...Array(24).keys()].map((h) => keys.reduce((a, k) => a + S[k][h], 0));
+  const ticks = niceTicks(Math.max(...tot)), top = ticks[ticks.length - 1];
+  const y = (v) => f.y0 - v / top * (f.y0 - f.y1), bw = (f.x1 - f.x0) / 24;
+  yAxis(f, ticks, y, (t) => t >= 1000 ? (t / 1000) + "k" : t);
+  for (let h = 0; h < 24; h++) {
+    let base = f.y0;
+    keys.forEach((k, j) => {
+      const v = S[k][h]; if (!v) return;
+      const hpx = f.y0 - y(v), top_ = j === keys.length - 1 || keys.slice(j + 1).every((kk) => !S[kk][h]);
+      const x = f.x0 + h * bw + 2, w = bw - 4, r = top_ ? Math.min(4, hpx) : 0, yy = base - hpx;
+      el("path", {d: `M${x} ${base}V${yy + r}q0 ${-r} ${r} ${-r}h${w - 2 * r}q${r} 0 ${r} ${r}V${base}Z`, fill: css(`--s${j + 1}`)}, f.svg);
+      base = yy - 2;
+    });
+    const t = el("text", {x: f.x0 + h * bw + bw / 2, y: f.y0 + 18, "text-anchor": "middle"}, f.svg); t.textContent = h % 2 ? "" : String(h).padStart(2, "0");
+    const hit = el("rect", {x: f.x0 + h * bw, y: f.y1, width: bw, height: f.y0 - f.y1, fill: "transparent"}, f.svg);
+    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${String(h).padStart(2, "0")}:00–${String(h + 1).padStart(2, "0")}:00</b><br>` + keys.map((k) => `${NAMES[k] || k}: ${fmtInt(S[k][h])}`).join("<br>")));
+    hit.addEventListener("mouseleave", hideTip);
+  }
+})();
+
+// ---------- unit cube range dots (log scale)
+(function () {
+  const C = D.charts.cube, rowH = 30, W = 1000, H = C.length * rowH + 40;
+  const f = frame($("cube"), W, H, {l: 150, r: 20, t: 8, b: 32});
+  const lo = Math.log10(0.003), hi = Math.log10(2);
+  const x = (v) => f.x0 + (Math.log10(Math.max(v, 0.003)) - lo) / (hi - lo) * (f.x1 - f.x0);
+  [0.005, 0.01, 0.05, 0.1, 0.5, 1].forEach((t) => {
+    el("line", {x1: x(t), x2: x(t), y1: f.y1, y2: f.y0, stroke: css("--grid")}, f.svg);
+    const tx = el("text", {x: x(t), y: f.y0 + 18, "text-anchor": "middle"}, f.svg); tx.textContent = t;
+  });
+  const tl = el("text", {x: f.x1, y: f.y0 + 32, "text-anchor": "end"}, f.svg); tl.textContent = "unit cube, ft³ (log) →";
+  C.forEach((c, i) => {
+    const cy = f.y1 + i * rowH + rowH / 2;
+    const t = el("text", {x: f.x0 - 10, y: cy + 4, "text-anchor": "end"}, f.svg); t.textContent = c.cat; t.style.fill = css("--ink");
+    el("line", {x1: x(c.p10), x2: x(c.p90), y1: cy, y2: cy, stroke: css("--s1"), "stroke-width": 2, "stroke-linecap": "round"}, f.svg);
+    el("circle", {cx: x(c.p50), cy, r: 5, fill: css("--s1"), stroke: css("--panel"), "stroke-width": 2}, f.svg);
+    const hit = el("rect", {x: f.x0, y: cy - rowH / 2, width: f.x1 - f.x0, height: rowH, fill: "transparent"}, f.svg);
+    hit.addEventListener("mousemove", (e) => showTip(e, `<b>${c.cat}</b><br>10th pct: ${c.p10.toFixed(3)} ft³<br>median: ${c.p50.toFixed(3)} ft³<br>90th pct: ${c.p90.toFixed(3)} ft³`));
+    hit.addEventListener("mouseleave", hideTip);
+  });
+})();
+
+// ---------- defects table
+(function () {
+  const NICE = {missing_dims: "Unit dims blank", missing_weight: "Unit weight blank", missing_case_qty: "Case pack blank", "placeholder_0.01": "Placeholder dims 0.01 × 0.01 × 0.01", placeholder_1: "Placeholder dims 1 × 1 × 1",
+    metric_units: "Centimetres typed as inches", ounces_as_pounds: "Ounces typed as pounds", decimal_shift_x10: "One dimension ×10 (decimal slip)",
+    default_1: "Case pack left at 1", case_smaller_than_unit: "Case smaller than the unit", orphan_not_in_item_master: "Ordered SKU missing from item master",
+    duplicate_conflicting_row: "Duplicate SKU row with conflicting dims"};
+  const tb = $("defects").querySelector("tbody"), max = Math.max(...D.charts.defects.map((d) => d.line_share));
+  for (const d of D.charts.defects) {
+    const w = d.line_share / max * 160;
+    tb.insertAdjacentHTML("beforeend", `<tr><td>${NICE[d.defect] || d.defect.replace(/_/g, " ")}</td><td class="num">${fmtInt(d.skus)}</td>
+      <td><div style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 162 12" style="width:162px;height:12px"><rect x="0" y="2" width="${Math.max(w, 2)}" height="8" rx="4" fill="var(--s1)"/></svg>
+      <span style="font-size:13px;color:var(--ink2)">${(d.line_share * 100).toFixed(1)}%</span></div></td></tr>`);
+  }
+  const X = D.charts.tx_defects;
+  $("txnote").innerHTML = `In <code>orders.csv</code>: ${fmtInt(X.duplicate_rows || 0)} exact duplicate rows, ${fmtInt(X.zero_or_negative_qty || 0)} rows with zero or negative quantity,
+    ${fmtInt(X.missing_pick_time || 0)} rows with no pick time, and ${fmtInt(X.sku_format_variant || 0)} SKUs written in lower case or with stray spaces.`;
+  $("foot").innerHTML = `Generated by <code>gtpfit.synth</code>. Same profile and seed give identical files. Velocity classes of selling SKUs: ` +
+    Object.entries(D.charts.velocity).map(([k, v]) => `${k} ${fmtInt(v)}`).join(" · ") + ".";
+})();
+</script>
+</body>
+</html>

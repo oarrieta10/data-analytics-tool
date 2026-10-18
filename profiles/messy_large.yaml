@@ -1,0 +1,12 @@
+# Stress test: bigger catalogue, dirtier item master, export clipped at Excel's row limit.
+name: messy_large
+seed: 7
+n_skus: 20000
+ecom_orders_per_day: 3500
+b2b_orders_per_day: 60
+truncate_orders_at_excel_limit: true
+defects:
+  missing_dims: 0.15
+  placeholder_001: 0.10
+  missing_case_qty: 0.08
+  metric_dims: 0.04
