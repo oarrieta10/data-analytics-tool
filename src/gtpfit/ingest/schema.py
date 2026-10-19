@@ -27,14 +27,15 @@ class Field:
 
 
 _SKU = ("sku", "item", "item number", "item no", "item nbr", "item id", "item code", "product",
-        "product id", "product code", "material", "material number", "article", "part number")
+        "product id", "product code", "material", "material number", "article", "part number", "part no", "part")
 
 TABLES: dict[str, list[Field]] = {
     "item_master": [
         Field("sku", "id", True, _SKU),
         Field("description", "text", False, ("description", "item description", "product description",
                                              "item desc", "desc", "item name", "product name", "sku desc",
-                                             "sku description", "style description")),
+                                             "sku description", "style description",
+                                             "part description")),
         Field("category", "text", False, ("category", "product category", "department", "item category")),
         Field("subcategory", "text", False, ("sub category", "subcategory", "class", "item class", "sub class")),
         Field("unit_l", "length", False, ("unit length", "each length", "item length", "length", "ea length", "unit l",
@@ -48,7 +49,8 @@ TABLES: dict[str, list[Field]] = {
               "unit"),
         Field("case_qty", "count", False, ("case pack", "case qty", "case quantity", "units per case", "pack size",
                                            "master pack qty", "inner pack", "case pack qty", "upc per case",
-                                           "std case quantity", "std case qty"), None),
+                                           "std case quantity", "std case qty", "qpc", "qty per case",
+                                           "quantity per case"), None),
         Field("case_l", "length", False, ("case length", "carton length", "master length", "ctn length", "case l",
                                           "std case length"), "case"),
         Field("case_w", "length", False, ("case width", "carton width", "master width", "ctn width", "case w",
@@ -60,13 +62,16 @@ TABLES: dict[str, list[Field]] = {
     ],
     "orders": [
         Field("order_id", "id", True, ("order", "order number", "order nbr", "order no", "order id", "sales order",
-                                       "so number", "order num")),
+                                       "so number", "order num", "customer order no", "customer order number",
+                                       "customer order")),
         Field("order_date", "date", True, ("order date", "ship date", "pick date", "shipped date", "date",
-                                           "transaction date", "date shipped")),
+                                           "transaction date", "date shipped", "picked at", "shipped at",
+                                           "closed at", "completed at")),
         Field("sku", "id", True, _SKU),
-        Field("qty", "qty", True, ("qty", "quantity", "qty shipped", "units", "qty picked", "quantity shipped",
-                                   "shipped qty", "pick qty", "units shipped", "units picked", "eaches",
-                                   "eaches picked", "each qty")),
+        # picked / shipped quantities first: a plain "quantity" is often what was ordered
+        Field("qty", "qty", True, ("qty shipped", "qty picked", "picked quantity", "shipped quantity",
+                                   "quantity shipped", "shipped qty", "pick qty", "units picked", "units shipped",
+                                   "eaches picked", "eaches", "each qty", "qty", "quantity", "units")),
         Field("cases", "cases", False, ("cases", "cases picked", "full cases", "cases shipped", "case picks")),
         Field("pick_secs", "time", False, ("pick time", "time", "ship time", "pick timestamp", "time picked",
                                            "order start of hour", "start of hour", "pick hour")),
@@ -74,12 +79,14 @@ TABLES: dict[str, list[Field]] = {
     ],
     "receipts": [
         Field("receipt_id", "id", False, ("receipt", "receipt number", "receipt nbr", "receipt no", "receipt id",
-                                          "asn", "asn number", "shipment", "shipment number",
+                                          "asn", "asn number", "asn id", "shipment", "shipment number",
                                           "inbound shipment", "container")),
         Field("po", "id", False, ("po", "po number", "po nbr", "purchase order", "po no")),
-        Field("receipt_date", "date", True, ("receipt date", "received date", "date received", "receive date", "date")),
+        Field("receipt_date", "date", True, ("receipt date", "received date", "date received", "receive date",
+                                             "received at", "date")),
         Field("sku", "id", True, _SKU),
         Field("qty", "qty", True, ("qty received", "units received", "received qty", "quantity received",
+                                   "received quantity",
                                    "inventory units", "eaches received", "qty", "quantity", "units")),
     ],
     "inventory": [

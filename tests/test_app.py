@@ -66,3 +66,37 @@ def test_peak_toggle_reveals_slider():
     at.toggle(key=base + "::on").set_value(True).run()
     assert not at.exception
     assert at.slider(key=base).value == at.slider(key="syn::E-commerce orders::ecom_single_line_share").value
+
+
+INGEST = """
+from gtpfit.app import ingest_page
+ingest_page.page()
+"""
+
+
+def test_ingest_page_guesses_and_ingests(tmp_path, monkeypatch):
+    """Files already in the client workspace (the uploader can't be driven by AppTest): guess, confirm, ingest."""
+    import shutil
+    from gtpfit.synth import generate, load_profile
+    src = tmp_path / "gen"
+    generate(load_profile(n_skus=200, ecom_orders_per_day=40, b2b_orders_per_day=2, days=20), src)
+    ws = tmp_path / "ws"
+    client = ws / "untitled"
+    client.mkdir(parents=True)
+    for f in ("item_master.csv", "orders.csv", "receipts.csv", "inventory_snapshots.csv"):
+        shutil.copy(src / f, client / f)
+    (client / "notes.md").write_text("not data", encoding="utf-8")
+    monkeypatch.setenv("GTPFIT_WORKSPACE", str(ws))
+    at = AppTest.from_string(INGEST, default_timeout=180).run()
+    assert not at.exception, at.exception
+    guesses = next(d.value for d in at.dataframe if "Use as" in d.value.columns).set_index(
+        "Source (file > sheet / table)")
+    assert guesses.loc["item_master.csv", "Use as"] == "Item master"
+    assert guesses.loc["orders.csv", "Use as"] == "Orders"
+    assert guesses.loc["receipts.csv", "Use as"] == "Receipts (inbound)"
+    assert guesses.loc["inventory_snapshots.csv", "Use as"] == "Inventory"
+    assert "notes.md" not in guesses.index  # not a data file
+    assert (guesses["Confidence"] == "high").all()
+    at.button(key="ing::go").click().run()
+    assert not at.exception, at.exception
+    assert any("Ready" in s.value for s in at.success), [e.value for e in at.error]

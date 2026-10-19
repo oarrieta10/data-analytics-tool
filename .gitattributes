@@ -2,3 +2,8 @@
 *.png binary
 *.xlsx binary
 *.parquet binary
+*.xls binary
+*.xlsb binary
+*.xlsm binary
+*.feather binary
+*.orc binary

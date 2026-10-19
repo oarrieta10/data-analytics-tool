@@ -10,7 +10,7 @@ def main():
         port = sys.argv[sys.argv.index("--port") + 1]
     app = Path(__file__).with_name("workbench.py")
     sys.argv = ["streamlit", "run", str(app), "--server.port", port, "--server.headless", "true",
-                "--browser.gatherUsageStats", "false"]
+                "--browser.gatherUsageStats", "false", "--server.maxUploadSize", "5120"]  # MB: big client exports
     sys.exit(cli.main())
 
 

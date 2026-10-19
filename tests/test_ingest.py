@@ -404,3 +404,39 @@ def test_low_density_goods_fit_inches_pounds():
                           "unit_weight": [1.46] * 50})  # ~3 lb/ft3: light apparel / footwear boxes
     a = assess(items, ["unit_l", "unit_w", "unit_h"], "unit_weight", "unit", IngestParams())
     assert a.set_index(["length", "weight"]).loc[("in", "lb"), "plausible"]
+
+
+# ---- database-style exports: run-together names, joined tables ---------------------------
+
+@pytest.mark.parametrize("table,headers,want", [
+    ("orders", ["warehouse", "closedat", "releasedat", "id", "part_number", "part_description", "customerorderno",
+                "quantity", "pickedquantity", "order_status"],
+     {"order_id": "customerorderno", "order_date": "closedat", "sku": "part_number", "qty": "pickedquantity"}),
+    ("receipts", ["id", "asnid", "partnumber", "po", "quantity", "receivedat"],
+     {"receipt_id": "asnid", "sku": "partnumber", "po": "po", "qty": "quantity", "receipt_date": "receivedat"}),
+    ("item_master", ["partnumber", "partdescription", "length", "width", "height", "weight", "qpc"],
+     {"sku": "partnumber", "description": "partdescription", "unit_l": "length", "case_qty": "qpc"}),
+])
+def test_database_style_headers_map(table, headers, want):
+    m = suggest_mapping(headers, table)
+    assert {k: v for k, v in m.mapping.items() if k in want} == want, m.mapping
+
+
+def test_unused_duplicate_columns_do_not_block(tmp_path):
+    p = tmp_path / "joined.csv"
+    p.write_text("id,Item Number,Item Description,Unit Weight,id\n1,A1,Thing,1.5,9\n2,B2,Other,2.0,8\n",
+                 encoding="utf-8")
+    r = ingest_table(p, "item_master")
+    assert "duplicate_header" in {i.code for i in r.issues if i.severity == "info"}
+    assert r.table is not None and list(r.table["sku"]) == ["A1", "B2"]
+    p2 = tmp_path / "joined2.csv"
+    p2.write_text("Item Number,Unit Weight,Item Number\nA1,1.5,B\n", encoding="utf-8")
+    r2 = ingest_table(p2, "item_master")
+    assert "duplicate_header" in {i.code for i in r2.issues if i.severity == "block"}
+
+
+def test_two_generic_columns_are_not_high_confidence(tmp_path):
+    from gtpfit.ingest.classify import classify
+    p = tmp_path / "x.csv"
+    p.write_text("partnumber,quantity,weight\nA1,3,1.2\n", encoding="utf-8")
+    assert classify(p).confidence != "high"

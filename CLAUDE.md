@@ -23,11 +23,18 @@ interactive HTML report.
   - `defects.py` planted problems + manifest · `generate.py` writer · `qa.py` realism report
 - `src/gtpfit/ingest/` — client files → canonical tables (done)
   - `schema.py` canonical fields + header synonyms · `params.py` thresholds with sources
-  - `read.py` CSV (DuckDB) / XLSX as text · `mapping.py` auto-match + WMS profiles
+  - `readers.py` one registry of file readers (content first, extension second): delimited text (any
+    extension/delimiter/encoding), .gz/.zip, Excel .xlsx/.xlsm/.xls/.xlsb (python-calamine, fallbacks
+    openpyxl/xlrd/pyxlsb; title rows skipped), JSON/JSONL, Parquet, Feather/Arrow, ORC, SQLite, DuckDB.
+    A `Source(path, part)` is a file or one sheet / table / zip member. Not handled: Access, live DB
+    connections, SQL dumps, fixed-width reports.
+  - `classify.py` guess the table each source holds (consultant confirms) · `mapping.py` auto-match + WMS profiles
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision
-  - `checks.py` issue record, gaps · `pipeline.py` ingest_table / ingest_folder / write_outputs
+  - `checks.py` issue record, gaps · `pipeline.py` ingest_table / ingest_sources / ingest_folder / write_outputs
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
 - `profiles/` — YAML profiles for synthetic clients (`default`, `messy_large`, `playground`)
+- `data/workspace/<client>/` — files dropped into the workbench (git-ignored, stays on the laptop)
+- `tests/fixtures/` — synthetic Excel fixtures (.xls/.xlsb/.xlsm need Excel to make: `make_excel_fixtures.py`)
 - `wms_profiles/` — saved column mappings per client WMS (`synthetic.yaml` for synth exports)
 - `tests/` — pytest; run `python -m pytest -q`
 

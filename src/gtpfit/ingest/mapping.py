@@ -49,13 +49,15 @@ def suggest_mapping(headers, table: str, params: IngestParams | None = None) -> 
     params = params or IngestParams()
     norm = {h: normalise_header(h) for h in headers}
     flds = TABLES[table]
-    # candidate scores: exact match = 2 - rank/100, fuzzy = ratio (< 1)
+    # candidate scores: exact match = 2 - rank/100, fuzzy = ratio (< 1).  "Exact" ignores spaces, so
+    # database-style names match too: partnumber = part number, customerorderno = customer order no.
     cand = []
     for f in flds:
         syn = [normalise_header(s) for s in f.synonyms]
+        compact = [s.replace(" ", "") for s in syn]
         for h, n in norm.items():
-            if n in syn:
-                cand.append((2 - syn.index(n) / 100, f.name, h, "exact"))
+            if n.replace(" ", "") in compact:
+                cand.append((2 - compact.index(n.replace(" ", "")) / 100, f.name, h, "exact"))
             else:
                 r = max(difflib.SequenceMatcher(None, n, s).ratio() for s in syn)
                 if r >= params.fuzzy_header_cutoff:

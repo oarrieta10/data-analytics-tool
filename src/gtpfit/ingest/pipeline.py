@@ -1,6 +1,7 @@
 """pipeline.py — read, map, type, convert and check client files into canonical tables.
 
-    ingest_table(paths, table, profile=None, params=None, accept=()) -> TableResult
+    ingest_table(sources, table, profile=None, params=None, accept=()) -> TableResult
+    ingest_sources({table: [Source]}, profile=None, params=None, accept=(), strict=True) -> IngestResult
     ingest_folder(folder, profile=None, params=None, accept=(), strict=True) -> IngestResult
     write_outputs(result, out_dir) -> Path
 
@@ -24,8 +25,10 @@ from . import coerce
 from .checks import Issue, fmt_day, issues_frame, missing_day_runs, snapshot_gaps
 from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile, suggest_mapping
 from .params import IngestParams
-from .read import CSV_EXT, EXCEL_EXT, PARQUET_EXT, read_headers, read_raw
-from .schema import IDENTIFY_BY, REQUIRED_TABLES, TABLES
+from .classify import classify, list_sources
+from .read import read_headers, read_raw
+from .readers import Source, as_source
+from .schema import REQUIRED_TABLES, TABLES
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 
 _DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
@@ -67,6 +70,7 @@ class IngestResult:
     sources: dict
     date_formats: dict
     unit_evidence: pd.DataFrame | None = None
+    inputs: dict = field(default_factory=dict)   # table -> [Source] actually ingested
 
     @property
     def blocked(self) -> bool:
@@ -75,10 +79,11 @@ class IngestResult:
 
 # ---- one table ------------------------------------------------------------------
 
-def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: IngestParams | None = None,
+def ingest_table(sources, table: str, profile: WmsProfile | None = None, params: IngestParams | None = None,
                  accept=()) -> TableResult:
     params = params or IngestParams()
-    paths = [Path(p) for p in (paths if isinstance(paths, (list, tuple)) else [paths])]
+    sheet = profile.sheets.get(table) if profile else None
+    paths = [as_source(p, sheet) for p in (sources if isinstance(sources, (list, tuple)) else [sources])]
     res = TableResult(table, [str(p) for p in paths])
     accepted = set(accept)
 
@@ -90,17 +95,12 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
                                 None if share is None else float(share), fld))
 
     # -- headers first: the same layout is required to stack files
-    sheet = profile.sheets.get(table) if profile else None
-    headers = None
+    headers, dupes = None, set()
     for p in paths:
-        h = read_headers(p, sheet)
-        dupes = [x for i, x in enumerate(h) if x in h[:i]]
-        if dupes:
-            add("duplicate_header", "block", f"{p.name} repeats column names {sorted(set(dupes))}; "
-                "it is unclear which one holds the data.")
-            return res
+        h = read_headers(p)
+        dupes |= {x for i, x in enumerate(h) if x in h[:i]}
         if headers is not None and h != headers:
-            add("header_mismatch", "block", f"{p.name} has different columns from {paths[0].name}; "
+            add("header_mismatch", "block", f"{p} has different columns from {paths[0]}; "
                 "files for one table must share a layout.")
             return res
         headers = h
@@ -120,6 +120,14 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
         for f, hs in m.alternatives.items():
             add("alternative_columns", "info", f"{f} uses '{m.mapping[f]}'; also possible: {hs}.", fld=f)
     res.mapping = m
+    used_dupes = sorted(dupes & set(m.mapping.values()))
+    if used_dupes:
+        add("duplicate_header", "block", f"{paths[0]} repeats column names {used_dupes} that the mapping uses; "
+            "it is unclear which one holds the data. Rename one in the file or the WMS profile.")
+        return res
+    if dupes:
+        add("duplicate_header", "info", f"{paths[0]} repeats column names {sorted(dupes)} (e.g. joined database "
+            "tables); not used, so ignored.")
     req = {f.name for f in TABLES[table] if f.required}
     for f, hs in m.ambiguous.items():
         add("ambiguous_column", "block" if f in req else "warn",
@@ -137,27 +145,27 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
     used = list(dict.fromkeys(m.mapping.values()))
     frames = []
     for p in paths:
-        df, meta = read_raw(p, sheet=sheet, columns=used)
+        df, meta = read_raw(p, columns=used)
         if meta["encoding"] not in (None, "utf-8"):
-            add("encoding_fallback", "info", f"{p.name} is not UTF-8; read as {meta['encoding']}.")
+            add("encoding_fallback", "info", f"{p} is not UTF-8; read as {meta['encoding']}.")
         n = meta["data_rows"]
-        df["_file"], df["_row"] = p.name, range(2, n + 2)  # spreadsheet row number (header is row 1)
+        df["_file"], df["_row"] = str(p), range(2, n + 2)  # spreadsheet row number (header is row 1)
         blank = df[used].isna().all(axis=1)
         k = int(blank.sum())
         if n - k in params.excel_row_limits:
-            add("excel_row_limit", "block", f"{p.name} has exactly {n - k:,} data rows, a spreadsheet row limit, so "
+            add("excel_row_limit", "block", f"{p} has exactly {n - k:,} data rows, a spreadsheet row limit, so "
                 "the export was probably cut off. Re-export from the WMS as CSV, or accept if the file truly ends "
                 "there.", count=n - k)
         elif n in params.excel_row_limits and k:
-            add("excel_padded", "warn", f"{p.name} runs to the spreadsheet row limit ({n:,} rows) but {k:,} of them "
+            add("excel_padded", "warn", f"{p} runs to the spreadsheet row limit ({n:,} rows) but {k:,} of them "
                 f"are blank; only {n - k:,} hold data. Check it is the full extract.", count=k)
         if k:
-            add("blank_rows", "info", f"{k:,} blank rows in {p.name} ignored (e.g. a leftover spreadsheet range).",
+            add("blank_rows", "info", f"{k:,} blank rows in {p} ignored (e.g. a leftover spreadsheet range).",
                 count=k)
         frames.append(df.loc[~blank])
     df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0].reset_index(drop=True)
     if len(df) == 0:
-        add("empty_table", "block", f"{paths[0].name} has a header but no rows.")
+        add("empty_table", "block", f"{paths[0]} has a header but no rows.")
         return res
     n_rows = len(df)
 
@@ -368,61 +376,57 @@ def _units(out, m, profile, params, add):
                          plausible=bool(chosen.plausible), median_longest_in=chosen.median_longest_in,
                          median_density_lb_ft3=chosen.median_density_lb_ft3))
     return out, pd.DataFrame(rows, columns=["group", "length", "weight", "method", "plausible",
-                                            "median_longest_in", "median_density_lb_ft3"]),         (pd.concat(evidence, ignore_index=True) if evidence else pd.DataFrame())
+                                            "median_longest_in", "median_density_lb_ft3"]), \
+        (pd.concat(evidence, ignore_index=True) if evidence else pd.DataFrame())
 
 
-# ---- folder -------------------------------------------------------------------------
+# ---- several tables: confirmed sources, or a folder ----------------------------------
 
-def _discover(folder: Path, profile, params, add):
-    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CSV_EXT | EXCEL_EXT | PARQUET_EXT)
+def discover(paths, profile=None, params=None, add=None) -> dict:
+    """{table: [Source]} for files (and their sheets / tables), by WMS profile patterns or by classify()."""
+    add = add or (lambda *a: None)
+    files = sorted(Path(p) for p in paths)
     found: dict[str, list] = {}
     if profile and profile.files:
         for table, pattern in profile.files.items():
-            hits = sorted(folder.glob(pattern))
+            hits = sorted(p for p in files if p.match(pattern))
             if hits:
-                found[table] = hits
+                found[table] = [Source(p, profile.sheets.get(table)) for p in hits]
         return found
-    for p in files:
-        h = read_headers(p)
-        scores = []
-        for table in TABLES:
-            m = suggest_mapping(h, table, params)
-            ident = IDENTIFY_BY.get(table)
-            if not m.missing_required and (not ident or any(f in m.mapping for f in ident)):
-                scores.append((len(m.mapping), table))
-        scores.sort(reverse=True)
-        if not scores:
-            add("", "unrecognised_file", "warn", f"{p.name} does not look like any table; ignored.")
-        elif len(scores) > 1 and scores[0][0] == scores[1][0]:
-            add("", "ambiguous_file", "block", f"{p.name} could be {scores[0][1]} or {scores[1][1]}; "
-                "list it under files: in a WMS profile.")
+    for src in list_sources(files):
+        g = classify(src, params)
+        if g.table is None:
+            add("", "unrecognised_file", "warn", f"{src} does not look like any table; ignored.")
+        elif g.confidence == "low":
+            add("", "ambiguous_file", "block", f"{src} could be {g.ranking[0][0]} or {g.ranking[1][0]}; "
+                "assign it yourself (workbench) or list it under files: in a WMS profile.")
         else:
-            found.setdefault(scores[0][1], []).append(p)
+            found.setdefault(g.table, []).append(src)
     return found
 
 
-def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParams | None = None,
-                  accept=(), strict: bool = True) -> IngestResult:
-    folder = Path(folder)
+def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: IngestParams | None = None,
+                   accept=(), strict: bool = True, _issues=None, where: str = "the inputs") -> IngestResult:
+    """Ingest confirmed sources: {table: [Source or path]}.  Missing tables are reported like a folder run."""
     params = params or IngestParams()
     accepted = set(accept)
-    issues: list[Issue] = []
+    issues: list[Issue] = list(_issues or [])
 
     def add(table, code, severity, message):
         if severity == "block" and code in accepted:
             severity = "accepted"
         issues.append(Issue(table, code, severity, message))
 
-    found = _discover(folder, profile, params, add)
-    tables, rejects, units, mappings, sources, dfmt, evid = {}, {}, [], {}, {}, {}, None
+    tables, rejects, units, mappings, sources, dfmt, evid, inputs = {}, {}, [], {}, {}, {}, None, {}
     for table in TABLES:
-        if table not in found:
+        if not assign.get(table):
             add(table, "table_missing", "block" if table in REQUIRED_TABLES else "warn",
-                f"No {table} file found in {folder}.")
+                f"No {table} file found in {where}.")
             continue
-        r = ingest_table(found[table], table, profile, params, accept)
+        r = ingest_table(assign[table], table, profile, params, accept)
         issues += r.issues
         sources[table] = ", ".join(r.paths)
+        inputs[table] = [as_source(x) for x in assign[table]]
         if r.mapping is not None:
             mappings[table] = r.mapping
         if r.table is not None:
@@ -437,10 +441,27 @@ def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParam
         tables["orders"] = _apply_case_packs(tables["orders"], tables.get("item_master"), issues)
     res = IngestResult(tables, rejects, issues_frame(issues),
                        pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt,
-                       evid)
+                       evid, inputs)
     if strict and res.blocked:
         raise IngestError(res)
     return res
+
+
+def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParams | None = None,
+                  accept=(), strict: bool = True) -> IngestResult:
+    """Every readable file in the folder (not subfolders), assigned by WMS profile or by classify()."""
+    folder = Path(folder)
+    params = params or IngestParams()
+    pre: list[Issue] = []
+
+    def add(table, code, severity, message):
+        if severity == "block" and code in set(accept):
+            severity = "accepted"
+        pre.append(Issue(table, code, severity, message))
+
+    files = [p for p in folder.iterdir() if p.is_file()]
+    found = discover(files, profile, params, add)
+    return ingest_sources(found, profile, params, accept, strict, _issues=pre, where=str(folder))
 
 
 def _apply_case_packs(o: pd.DataFrame, im: pd.DataFrame | None, issues: list) -> pd.DataFrame:
@@ -480,8 +501,10 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
         r = u.iloc[0]
         units = {"length": r["length"], "weight": r["weight"]}
     fmts = set(result.date_formats.values()) - {"native"}
+    first = {t: srcs[0] for t, srcs in result.inputs.items() if srcs}
     return WmsProfile(name=name, units=units, date_format=fmts.pop() if len(fmts) == 1 else None,
-                      files={t: Path(p.split(", ")[0]).name for t, p in result.sources.items()},
+                      files={t: s.path.name for t, s in first.items()},
+                      sheets={t: s.part for t, s in first.items() if s.part},
                       columns={t: dict(m.mapping) for t, m in result.mappings.items()})
 
 
