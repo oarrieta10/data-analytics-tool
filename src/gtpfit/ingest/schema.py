@@ -74,7 +74,8 @@ TABLES: dict[str, list[Field]] = {
     ],
     "receipts": [
         Field("receipt_id", "id", False, ("receipt", "receipt number", "receipt nbr", "receipt no", "receipt id",
-                                          "asn", "asn number")),
+                                          "asn", "asn number", "shipment", "shipment number",
+                                          "inbound shipment", "container")),
         Field("po", "id", False, ("po", "po number", "po nbr", "purchase order", "po no")),
         Field("receipt_date", "date", True, ("receipt date", "received date", "date received", "receive date", "date")),
         Field("sku", "id", True, _SKU),
