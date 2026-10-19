@@ -20,7 +20,13 @@ TIME_FORMATS = ["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p", "%Y-%m-%d %H:%M:
 _THOUSANDS = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
 
 
+def _no_fail(s):
+    return pd.Series(False, index=s.index)
+
+
 def to_number(s: pd.Series) -> tuple[pd.Series, pd.Series]:
+    if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+        return s.astype(float), _no_fail(s)
     txt = s.astype("string")
     clean = txt.where(~txt.str.match(_THOUSANDS, na=False), txt.str.replace(",", "", regex=False))
     num = pd.to_numeric(clean, errors="coerce").astype(float)
@@ -45,7 +51,9 @@ def date_fits(s: pd.Series) -> dict:
 
 
 def choose_date_format(s: pd.Series, declared: str | None, min_share: float):
-    """-> (format or None, status, fits).  status: declared | detected | mismatch | ambiguous | none."""
+    """-> (format or None, status, fits).  status: native | declared | detected | mismatch | ambiguous | none."""
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return "native", "native", {}
     fits = date_fits(s)
     good = [f for f, v in fits.items() if v >= min_share]
     if declared:
@@ -64,12 +72,17 @@ def date_fits_one(s: pd.Series, fmt: str) -> float:
 
 
 def to_date(s: pd.Series, fmt: str) -> tuple[pd.Series, pd.Series]:
+    if fmt == "native":
+        return s.dt.normalize().astype("datetime64[ns]"), _no_fail(s)
     out, failed = _parse_unique(s, fmt)
-    return out.dt.normalize(), failed
+    return out.dt.normalize().astype("datetime64[ns]"), failed
 
 
 def to_seconds(s: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Time of day -> seconds after midnight (Int64), trying each TIME_FORMAT in turn."""
+    if pd.api.types.is_datetime64_any_dtype(s):  # Excel-style times arrive as 1899-12-30 HH:MM:SS
+        secs = (s.dt.hour * 3600 + s.dt.minute * 60 + s.dt.second).astype("Int64")
+        return secs, _no_fail(s)
     u = pd.Series(s.dropna().unique())
     best = pd.Series(pd.NaT, index=u.index, dtype="datetime64[ns]")
     for f in TIME_FORMATS:
@@ -84,6 +97,8 @@ def to_seconds(s: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 def normalise_ids(s: pd.Series, upper: bool) -> tuple[pd.Series, int]:
     """Trim (and upper-case) keys.  Returns the series and how many distinct raw values changed."""
+    if not pd.api.types.is_string_dtype(s):
+        s = s.astype("string")  # numeric order / receipt numbers
     u = pd.Series(s.dropna().unique())
     fixed = u.str.strip()
     if upper:

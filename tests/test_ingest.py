@@ -264,3 +264,142 @@ def test_write_outputs(res, tmp_path):
     back = duckdb.read_parquet(str(out / "orders.parquet")).df()
     assert len(back) == len(res.tables["orders"])
     assert (out / "issues.csv").exists() and (out / "units.csv").exists()
+
+
+# ---- real-client learnings: parquet, blank rows, classification, names, cases + eaches, density ----
+
+def _to_parquet(src: Path, dst: Path, date_col=None, date_fmt="%m/%d/%Y"):
+    import duckdb
+    sel = "*" if not date_col else f"* replace (strptime(\"{date_col}\", '{date_fmt}') as \"{date_col}\")"
+    types = f", types={{'{date_col}': 'VARCHAR'}}" if date_col else ""
+    duckdb.sql(f"copy (select {sel} from read_csv('{src.as_posix()}', header=true{types})) "
+               f"to '{dst.as_posix()}' (format parquet)")
+
+
+def test_parquet_reads_like_csv(ds, res, tmp_path):
+    _to_parquet(ds / "item_master.csv", tmp_path / "im.parquet")
+    _to_parquet(ds / "orders.csv", tmp_path / "o.parquet", date_col="Order Date")  # real timestamp column
+    a = ingest_table(tmp_path / "im.parquet", "item_master").table
+    pd.testing.assert_frame_equal(a, res.tables["item_master"], check_dtype=False)
+    b = ingest_table(tmp_path / "o.parquet", "orders")
+    assert not [i for i in b.issues if i.severity == "block"]
+    want = res.tables["orders"]
+    assert len(b.table) == len(want)
+    assert b.table["order_date"].equals(want["order_date"])
+    assert (b.table["qty"].to_numpy() == want["qty"].to_numpy()).all()
+
+
+def test_blank_rows_ignored_not_rejected(ds, res, tmp_path):
+    folder = _clone(ds, tmp_path)
+    with open(folder / "orders.csv", "a", encoding="utf-8") as f:
+        f.write(",,,,,\n" * 500)
+    r = ingest_folder(folder, profile=load_wms_profile(WMS))
+    i = r.issues
+    row = i[(i.table == "orders") & (i.code == "blank_rows")]
+    assert row["count"].iat[0] == 500 and row.severity.iat[0] == "info"
+    assert len(r.tables["orders"]) == len(res.tables["orders"])
+    assert len(r.rejects["orders"]) == len(res.rejects["orders"])
+
+
+def test_padded_to_row_limit_warns_only(ds, tmp_path):
+    folder = _clone(ds, tmp_path)
+    n = len(_raw(ds, "orders"))
+    with open(folder / "orders.csv", "a", encoding="utf-8") as f:
+        f.write(",,,,,\n" * 100)
+    r = ingest_folder(folder, profile=load_wms_profile(WMS), params=IngestParams(excel_row_limits=(n + 100,)))
+    assert not r.blocked
+    assert "excel_padded" in _codes(r, "warn")
+
+
+def test_classification_needs_identifying_fields(ds, tmp_path):
+    rec = _raw(ds, "receipts").rename(columns={"Qty Received": "Inventory Units"})
+    inv = _raw(ds, "inventory_snapshots").rename(columns={"On Hand Qty": "Sum_Eaches"})
+    folder = _clone(ds, tmp_path, receipts=rec, inventory_snapshots=inv)
+    pd.DataFrame({"SKU": ["A1", "B2"], "Note": ["x", "y"]}).to_csv(folder / "sku_list.csv", index=False)
+    r = ingest_folder(folder, strict=False)
+    assert r.sources["receipts"].endswith("receipts.csv")
+    assert r.sources["inventory"].endswith("inventory_snapshots.csv")
+    assert r.sources["item_master"].endswith("item_master.csv")
+    assert "unrecognised_file" in _codes(r, "warn")  # a bare SKU list is not an item master
+
+
+@pytest.mark.parametrize("table,headers,want", [
+    ("orders", ["ORDER NUMBER", "SKU", "ORDER DATE", "UNITS PICKED", "Cases", "Channel", "ORDER START OF HOUR"],
+     {"order_id": "ORDER NUMBER", "order_date": "ORDER DATE", "sku": "SKU", "qty": "UNITS PICKED",
+      "cases": "Cases", "pick_secs": "ORDER START OF HOUR", "channel": "Channel"}),
+    ("orders", ["Warehouse", "Pick Date", "Pick Time", "Order", "SKU", "Cases", "Eaches", "Channel"],
+     {"order_id": "Order", "order_date": "Pick Date", "sku": "SKU", "qty": "Eaches", "cases": "Cases",
+      "pick_secs": "Pick Time", "channel": "Channel"}),
+    ("receipts", ["RECEIPT NUMBER", "SKU", "RECEIPT DATE", "UNITS RECEIVED", "Eaches Received", "PO Number"],
+     {"receipt_id": "RECEIPT NUMBER", "po": "PO Number", "receipt_date": "RECEIPT DATE", "sku": "SKU",
+      "qty": "UNITS RECEIVED"}),
+    ("receipts", ["Warehouse", "Shipment", "PO Number", "Case Number", "SKU", "Inventory Units", "Receipt Date"],
+     {"po": "PO Number", "receipt_date": "Receipt Date", "sku": "SKU", "qty": "Inventory Units"}),
+    ("inventory", ["INV DATE", "SKU", "STORAGE LOCATION", "OH UNITS"],
+     {"snapshot_date": "INV DATE", "sku": "SKU", "location": "STORAGE LOCATION", "on_hand": "OH UNITS"}),
+    ("inventory", ["Inventory Snapshot", "Sku", "Sum_Eaches", "Snapshot Date"],
+     {"snapshot_date": "Snapshot Date", "sku": "Sku", "on_hand": "Sum_Eaches"}),
+    ("item_master", ["SKU", "SKU DESC", "UNIT L", "UNIT W", "UNIT H", "UNIT WEIGHT", "CASE QTY", "CASE L"],
+     {"sku": "SKU", "description": "SKU DESC", "unit_l": "UNIT L", "unit_w": "UNIT W", "unit_h": "UNIT H",
+      "unit_weight": "UNIT WEIGHT", "case_qty": "CASE QTY", "case_l": "CASE L"}),
+    ("item_master", ["Company ", "SKU", "Style Description", "Std Unit Length", "Std Unit Width", "Std Unit Height",
+                     "Unit Weight", "Std Case Quantity"],
+     {"sku": "SKU", "description": "Style Description", "unit_l": "Std Unit Length", "unit_w": "Std Unit Width",
+      "unit_h": "Std Unit Height", "unit_weight": "Unit Weight", "case_qty": "Std Case Quantity"}),
+])
+def test_common_wms_headers_map(table, headers, want):
+    m = suggest_mapping(headers, table)
+    assert {k: v for k, v in m.mapping.items() if k in want} == want, m.mapping
+    assert not m.ambiguous
+
+
+def _cases_eaches(ds, res, tmp_path, drop_pack_for=None):
+    """Synthetic orders rewritten the way some WMSs export: full cases in 'Cases', loose units in 'Eaches'."""
+    o = _raw(ds, "orders")
+    im = res.tables["item_master"].drop_duplicates("sku").set_index("sku")["case_qty"]
+    sku = o["Item Number"].str.strip().str.upper()
+    q = pd.to_numeric(o["Qty Shipped"])
+    cq = sku.map(im)
+    full = (o["Channel"] == "Store") & (cq > 1) & (q > 0) & (q % cq == 0)
+    o["Cases"] = np.where(full, (q / cq).fillna(0), 0).astype(int)
+    o["Eaches"] = np.where(full, 0, q).astype(int)
+    o = o.drop(columns=["Qty Shipped"])
+    imr = _raw(ds, "item_master")
+    if drop_pack_for is not None:
+        imr.loc[imr["Item Number"] == drop_pack_for, "Case Pack"] = ""
+    folder = _clone(ds, tmp_path, orders=o, item_master=imr)
+    prof = load_wms_profile(WMS)
+    prof.columns["orders"] = {**prof.columns["orders"], "qty": "Eaches", "cases": "Cases"}
+    return folder, prof, int(full.sum()), o, full
+
+
+def test_cases_plus_eaches_recovers_units(ds, res, tmp_path):
+    folder, prof, n_full, _, _ = _cases_eaches(ds, res, tmp_path)
+    assert n_full > 100
+    r = ingest_folder(folder, profile=prof)
+    o, base = r.tables["orders"], res.tables["orders"]
+    assert len(o) == len(base)  # full-case lines are not set aside as zero quantity
+    assert (o["qty"].to_numpy() == base["qty"].to_numpy()).all()
+    assert int(o["full_case"].sum()) == int((o["cases"] > 0).sum())
+    assert {"eaches", "cases", "full_case"} <= set(o.columns)
+
+
+def test_cases_without_case_pack_flagged(ds, res, tmp_path):
+    _, _, _, o, full = _cases_eaches(ds, res, tmp_path / "a")
+    victim = o.loc[full, "Item Number"].str.strip().str.upper().value_counts().index[0]
+    folder, prof, _, o, full = _cases_eaches(ds, res, tmp_path / "b", drop_pack_for=victim)
+    r = ingest_folder(folder, profile=prof)
+    i = r.issues
+    row = i[i.code == "case_pack_missing"]
+    n = int((full & (o["Item Number"].str.strip().str.upper() == victim)).sum())
+    assert row.severity.iat[0] == "warn" and row["count"].iat[0] == n
+    oo = r.tables["orders"]
+    assert oo.loc[(oo["sku"] == victim) & (oo["cases"] > 0), "qty"].isna().all()
+
+
+def test_low_density_goods_fit_inches_pounds():
+    from gtpfit.ingest.units import assess
+    items = pd.DataFrame({"unit_l": [14.0] * 50, "unit_w": [10.0] * 50, "unit_h": [6.0] * 50,
+                          "unit_weight": [1.46] * 50})  # ~3 lb/ft3: light apparel / footwear boxes
+    a = assess(items, ["unit_l", "unit_w", "unit_h"], "unit_weight", "unit", IngestParams())
+    assert a.set_index(["length", "weight"]).loc[("in", "lb"), "plausible"]

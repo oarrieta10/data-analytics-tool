@@ -1,11 +1,15 @@
-"""read.py — read one client file into a DataFrame of strings, plus facts about the file.
+"""read.py — read one client file into a DataFrame, plus facts about the file.
 
-    read_raw(path, sheet=None) -> (DataFrame[str], meta dict)
+    read_headers(path, sheet=None) -> list of column names (cheap)
+    read_raw(path, sheet=None, columns=None) -> (DataFrame, meta dict)
 
 CSV/TXT/TSV: UTF-8 files go through DuckDB (fast on multi-million-row
 exports, delimiter auto-detected); other encodings (Windows-1252, UTF-16) fall
 back to pandas and are reported.  XLSX/XLSM: first sheet unless one is named.
-Every value stays text here; coerce.py decides types.  Blank cells become NA.
+Parquet: through DuckDB, keeping its own number and date types.
+Text files stay text here; coerce.py decides types.  Blank cells become NA.
+`columns` (names as read_headers returns them) reads only those columns, so a
+wide export loads only what the mapping uses.
 
 meta: format, encoding, sheet, data_rows, headers, duplicate_headers.
 """
@@ -20,6 +24,7 @@ import pandas as pd
 
 CSV_EXT = {".csv", ".txt", ".tsv"}
 EXCEL_EXT = {".xlsx", ".xlsm"}
+PARQUET_EXT = {".parquet"}
 _CHUNK = 1 << 20
 
 
@@ -59,39 +64,65 @@ def _dupes(headers) -> list:
     return d
 
 
-def read_raw(path, sheet=None) -> tuple[pd.DataFrame, dict]:
+def _q(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def read_raw(path, sheet=None, columns=None) -> tuple[pd.DataFrame, dict]:
     path = Path(path)
     ext = path.suffix.lower()
     meta = dict(path=str(path), format=None, encoding=None, sheet=None)
+    headers = read_headers(path, sheet)
+    keep = [i for i, h in enumerate(headers) if columns is None or h in set(columns)]
     if ext in CSV_EXT:
         enc = _sniff_encoding(path)
-        headers, delim = _header_line(path, enc)
+        _, delim = _header_line(path, enc)
         meta.update(format="csv", encoding=enc)
         if enc == "utf-8":
             import duckdb
             rel = duckdb.read_csv(str(path), header=True, all_varchar=True, sep=delim)
-            df = rel.df()
+            df = rel.select(*[_q(rel.columns[i]) for i in keep]).df()
         else:
-            df = pd.read_csv(path, dtype=str, encoding=enc, sep=delim, keep_default_na=False, na_values=[""])
+            df = pd.read_csv(path, dtype=str, encoding=enc, sep=delim, keep_default_na=False, na_values=[""],
+                             usecols=keep)
     elif ext in EXCEL_EXT:
-        from openpyxl import load_workbook
-        wb = load_workbook(path, read_only=True)
-        ws = wb[sheet] if sheet else wb.worksheets[0]
-        headers = [("" if c is None else str(c)).strip() for c in next(ws.iter_rows(max_row=1, values_only=True), ())]
-        meta.update(format="excel", sheet=ws.title)
-        wb.close()
-        df = pd.read_excel(path, sheet_name=meta["sheet"], dtype=object)
+        meta.update(format="excel", sheet=sheet or _first_sheet(path))
+        df = pd.read_excel(path, sheet_name=meta["sheet"], dtype=object, usecols=keep)
         df = df.map(_cell_text)
+    elif ext in PARQUET_EXT:
+        import duckdb
+        meta.update(format="parquet")
+        rel = duckdb.read_parquet(str(path))
+        df = rel.select(*[_q(rel.columns[i]) for i in keep]).df()
     elif ext == ".xls":
         raise ValueError(f"{path.name}: legacy .xls is not read; save it as .xlsx or .csv")
     else:
         raise ValueError(f"{path.name}: unsupported file type {ext}")
-    df.columns = [str(c).strip() for c in headers][: len(df.columns)] if len(headers) == len(df.columns) else \
-        [str(c).strip() for c in df.columns]
-    df = df.apply(lambda s: s.str.strip() if (s.dtype == object or pd.api.types.is_string_dtype(s)) else s)
+    df.columns = [headers[i] for i in keep]
+    df = df.apply(_clean_text)
     df = df.replace("", pd.NA)
-    meta.update(data_rows=len(df), headers=list(df.columns), duplicate_headers=_dupes(headers))
+    meta.update(data_rows=len(df), headers=headers, duplicate_headers=_dupes(headers))
     return df, meta
+
+
+def _clean_text(s: pd.Series) -> pd.Series:
+    """Trim text columns; object columns holding times/dates (Parquet TIME) become text like Excel cells."""
+    if s.dtype == object:
+        first = s.dropna().head(1)
+        if len(first) and not isinstance(first.iloc[0], str):
+            s = s.map(_cell_text)
+        return s.astype("string").str.strip()
+    if pd.api.types.is_string_dtype(s):
+        return s.str.strip()
+    return s
+
+
+def _first_sheet(path) -> str:
+    from openpyxl import load_workbook
+    wb = load_workbook(path, read_only=True)
+    name = wb.worksheets[0].title
+    wb.close()
+    return name
 
 
 def read_headers(path, sheet=None) -> list:
@@ -107,6 +138,9 @@ def read_headers(path, sheet=None) -> list:
         h = [("" if c is None else str(c)).strip() for c in next(ws.iter_rows(max_row=1, values_only=True), ())]
         wb.close()
         return h
+    if ext in PARQUET_EXT:
+        import duckdb
+        return [str(c).strip() for c in duckdb.read_parquet(str(path)).columns]
     return []
 
 

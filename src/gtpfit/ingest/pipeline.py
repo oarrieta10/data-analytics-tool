@@ -24,8 +24,8 @@ from . import coerce
 from .checks import Issue, fmt_day, issues_frame, missing_day_runs, snapshot_gaps
 from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile, suggest_mapping
 from .params import IngestParams
-from .read import CSV_EXT, EXCEL_EXT, read_headers, read_raw
-from .schema import REQUIRED_TABLES, TABLES
+from .read import CSV_EXT, EXCEL_EXT, PARQUET_EXT, read_headers, read_raw
+from .schema import IDENTIFY_BY, REQUIRED_TABLES, TABLES
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 
 _DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
@@ -89,33 +89,21 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
                                 None if count is None else int(count),
                                 None if share is None else float(share), fld))
 
-    # -- read every file; same layout required to stack them
-    frames, headers = [], None
+    # -- headers first: the same layout is required to stack files
+    sheet = profile.sheets.get(table) if profile else None
+    headers = None
     for p in paths:
-        df, meta = read_raw(p, sheet=profile.sheets.get(table) if profile else None)
-        if meta["encoding"] not in (None, "utf-8"):
-            add("encoding_fallback", "info", f"{p.name} is not UTF-8; read as {meta['encoding']}.")
-        if meta["duplicate_headers"]:
-            add("duplicate_header", "block", f"{p.name} repeats column names {meta['duplicate_headers']}; "
+        h = read_headers(p, sheet)
+        dupes = [x for i, x in enumerate(h) if x in h[:i]]
+        if dupes:
+            add("duplicate_header", "block", f"{p.name} repeats column names {sorted(set(dupes))}; "
                 "it is unclear which one holds the data.")
             return res
-        n = meta["data_rows"]
-        if n in params.excel_row_limits:
-            add("excel_row_limit", "block", f"{p.name} has exactly {n:,} data rows, a spreadsheet row limit, so the "
-                "export was probably cut off. Re-export from the WMS as CSV, or accept if the file truly ends there.",
-                count=n)
-        if headers is not None and meta["headers"] != headers:
+        if headers is not None and h != headers:
             add("header_mismatch", "block", f"{p.name} has different columns from {paths[0].name}; "
                 "files for one table must share a layout.")
             return res
-        headers = meta["headers"]
-        df["_file"], df["_row"] = p.name, range(2, n + 2)  # spreadsheet row number (header is row 1)
-        frames.append(df)
-    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-    if len(df) == 0:
-        add("empty_table", "block", f"{paths[0].name} has a header but no rows.")
-        return res
-    n_rows = len(df)
+        headers = h
 
     # -- columns
     if profile and table in profile.columns:
@@ -145,6 +133,34 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
     if m.missing_optional:
         add("optional_columns_absent", "info", f"Not in the file: {m.missing_optional}.")
 
+    # -- read only the mapped columns; drop blank rows; spreadsheet row limits
+    used = list(dict.fromkeys(m.mapping.values()))
+    frames = []
+    for p in paths:
+        df, meta = read_raw(p, sheet=sheet, columns=used)
+        if meta["encoding"] not in (None, "utf-8"):
+            add("encoding_fallback", "info", f"{p.name} is not UTF-8; read as {meta['encoding']}.")
+        n = meta["data_rows"]
+        df["_file"], df["_row"] = p.name, range(2, n + 2)  # spreadsheet row number (header is row 1)
+        blank = df[used].isna().all(axis=1)
+        k = int(blank.sum())
+        if n - k in params.excel_row_limits:
+            add("excel_row_limit", "block", f"{p.name} has exactly {n - k:,} data rows, a spreadsheet row limit, so "
+                "the export was probably cut off. Re-export from the WMS as CSV, or accept if the file truly ends "
+                "there.", count=n - k)
+        elif n in params.excel_row_limits and k:
+            add("excel_padded", "warn", f"{p.name} runs to the spreadsheet row limit ({n:,} rows) but {k:,} of them "
+                f"are blank; only {n - k:,} hold data. Check it is the full extract.", count=k)
+        if k:
+            add("blank_rows", "info", f"{k:,} blank rows in {p.name} ignored (e.g. a leftover spreadsheet range).",
+                count=k)
+        frames.append(df.loc[~blank])
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0].reset_index(drop=True)
+    if len(df) == 0:
+        add("empty_table", "block", f"{paths[0].name} has a header but no rows.")
+        return res
+    n_rows = len(df)
+
     # -- types
     out = pd.DataFrame(index=df.index)
     reason = pd.Series(pd.NA, index=df.index, dtype="string")
@@ -157,6 +173,9 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
             reason_field.setdefault(why, set()).add(fname)
 
     date_ok = True
+    has_cases = None
+    if "cases" in m.mapping:
+        has_cases = (coerce.to_number(df[m.mapping["cases"]])[0] > 0).fillna(False)
     for f in TABLES[table]:
         if f.name not in m.mapping:
             continue
@@ -169,7 +188,7 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
             out[f.name] = vals
         elif f.kind == "text":
             out[f.name] = col.astype("string")
-        elif f.kind in ("length", "weight", "count", "qty", "stock"):
+        elif f.kind in ("length", "weight", "count", "qty", "stock", "cases"):
             num, failed = coerce.to_number(col)
             if failed.any():
                 ex = col[failed].drop_duplicates().head(3).tolist()
@@ -178,9 +197,12 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
                 else:
                     add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not numbers "
                         f"(e.g. {ex}); left blank.", count=failed.sum(), share=failed.mean(), fld=f.name)
-            if f.kind in ("qty", "stock"):
-                bad = (num <= 0) if f.kind == "qty" else (num < 0)
-                reject(bad.fillna(False), "bad_qty", f.name)
+            if f.kind in ("qty", "stock", "cases"):
+                if f.kind != "cases":
+                    bad = ((num <= 0) if f.kind == "qty" else (num < 0)).fillna(False)
+                    if f.kind == "qty" and has_cases is not None:
+                        bad &= ~has_cases  # full-case line: loose units may be 0 or blank
+                    reject(bad, "bad_qty", f.name)
                 whole = num.dropna()
                 if len(whole) and (whole % 1 == 0).all():
                     num = num.astype("Int64")
@@ -207,6 +229,8 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
                 continue
             if status == "detected":
                 add("date_format_detected", "info", f"{f.name} read as {fmt}.", fld=f.name)
+            elif status == "native":
+                add("date_format_detected", "info", f"{f.name} is stored as dates in the file.", fld=f.name)
             res.date_format = fmt
             vals, failed = coerce.to_date(col, fmt)
             if f.required:
@@ -219,7 +243,8 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
                     count=failed.sum(), share=failed.mean(), fld=f.name)
             out[f.name] = secs
         if f.required:
-            reject(col.isna(), "missing_value", f.name)
+            blank = col.isna() & ~has_cases if (f.kind == "qty" and has_cases is not None) else col.isna()
+            reject(blank, "missing_value", f.name)
 
     # -- rows set aside
     for why, label in [("bad_qty", "zero or negative quantity"), ("missing_value", "a blank required field"),
@@ -236,6 +261,11 @@ def ingest_table(paths, table: str, profile: WmsProfile | None = None, params: I
     rej.insert(0, "reason", reason[~keep])
     res.rejects = rej.reset_index(drop=True)
     out = out.loc[keep].reset_index(drop=True)
+    if table == "orders" and "cases" in out:
+        out["eaches"] = out["qty"]
+        out["full_case"] = (out["cases"].fillna(0) > 0)
+        add("cases_need_item_master", "info", "Full-case lines found ('cases' column): qty here is loose units "
+            "only until case packs from the item master are applied (ingest_folder does this).", fld="cases")
 
     # -- units (item master)
     if table == "item_master":
@@ -344,7 +374,7 @@ def _units(out, m, profile, params, add):
 # ---- folder -------------------------------------------------------------------------
 
 def _discover(folder: Path, profile, params, add):
-    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CSV_EXT | EXCEL_EXT)
+    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CSV_EXT | EXCEL_EXT | PARQUET_EXT)
     found: dict[str, list] = {}
     if profile and profile.files:
         for table, pattern in profile.files.items():
@@ -357,7 +387,8 @@ def _discover(folder: Path, profile, params, add):
         scores = []
         for table in TABLES:
             m = suggest_mapping(h, table, params)
-            if not m.missing_required:
+            ident = IDENTIFY_BY.get(table)
+            if not m.missing_required and (not ident or any(f in m.mapping for f in ident)):
                 scores.append((len(m.mapping), table))
         scores.sort(reverse=True)
         if not scores:
@@ -402,12 +433,43 @@ def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParam
             units.append(r.units.assign(table=table))
         if r.unit_evidence is not None and len(r.unit_evidence):
             evid = r.unit_evidence
+    if "orders" in tables and "cases" in tables["orders"]:
+        tables["orders"] = _apply_case_packs(tables["orders"], tables.get("item_master"), issues)
     res = IngestResult(tables, rejects, issues_frame(issues),
                        pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt,
                        evid)
     if strict and res.blocked:
         raise IngestError(res)
     return res
+
+
+def _apply_case_packs(o: pd.DataFrame, im: pd.DataFrame | None, issues: list) -> pd.DataFrame:
+    """qty = loose units + cases x case pack.  Case lines with no case pack keep a blank qty, flagged."""
+    issues[:] = [i for i in issues if not (i.table == "orders" and i.code == "cases_need_item_master")]
+    o = o.copy()
+    cases = o["cases"].fillna(0).astype(float)
+    full = cases > 0
+    if im is None or "case_qty" not in im:
+        issues.append(Issue("orders", "case_pack_missing", "warn", f"{int(full.sum()):,} full-case lines but no "
+                            "item-master case packs; their unit quantity is left blank.", int(full.sum())))
+        cq = pd.Series(float("nan"), index=o.index)
+    else:
+        packs = im.drop_duplicates("sku").set_index("sku")["case_qty"]
+        cq = o["sku"].map(packs).astype(float)
+    unknown = full & ~(cq > 0)
+    qty = o["eaches"].fillna(0).astype(float) + cases * cq.where(cq > 0)
+    qty[~full] = o.loc[~full, "eaches"].astype(float)
+    whole = qty.dropna()
+    o["qty"] = qty.astype("Int64") if len(whole) and (whole % 1 == 0).all() else qty
+    issues.append(Issue("orders", "cases_converted", "info", f"{int(full.sum()):,} lines were picked as full cases; "
+                        "units = loose units + cases x case pack.", int(full.sum()), float(full.mean()), "cases"))
+    if unknown.any() and im is not None:
+        issues.append(Issue("orders", "case_pack_missing", "warn", f"{int(unknown.sum()):,} full-case lines "
+                            f"({o.loc[unknown, 'sku'].nunique():,} SKUs) have no case pack in the item master; their "
+                            "unit quantity is left blank for backfill to estimate.", int(unknown.sum()),
+                            float(unknown.mean()), "cases"))
+    lead = [c for c in o.columns if c not in ("eaches", "cases", "full_case")]
+    return o[lead + ["eaches", "cases", "full_case"]]
 
 
 def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
@@ -417,7 +479,7 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
     if len(u):
         r = u.iloc[0]
         units = {"length": r["length"], "weight": r["weight"]}
-    fmts = set(result.date_formats.values())
+    fmts = set(result.date_formats.values()) - {"native"}
     return WmsProfile(name=name, units=units, date_format=fmts.pop() if len(fmts) == 1 else None,
                       files={t: Path(p.split(", ")[0]).name for t, p in result.sources.items()},
                       columns={t: dict(m.mapping) for t, m in result.mappings.items()})
