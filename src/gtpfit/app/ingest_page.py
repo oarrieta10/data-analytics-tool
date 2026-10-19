@@ -18,9 +18,31 @@ SEV_LABEL = {"block": "⛔ block", "accepted": "✅ accepted", "warn": "⚠️ w
 AUTO = "(none: match columns automatically)"
 
 
+_DATA_EXT = {".csv", ".txt", ".tsv", ".xlsx", ".xlsm", ".parquet"}
+
+
 def _folders():
-    base = ROOT / "data" / "synthetic"
-    return sorted(p.relative_to(ROOT).as_posix() for p in base.iterdir() if p.is_dir()) if base.exists() else []
+    """Folders under data/ that hold client-style files (skips _ingest, _truth, _benchmark...)."""
+    base = ROOT / "data"
+    if not base.exists():
+        return []
+    out = []
+    for p in sorted(base.rglob("*")):
+        rel = p.relative_to(base)
+        if p.is_dir() and len(rel.parts) <= 3 and not any(x.startswith("_") for x in rel.parts) and                 any(c.suffix.lower() in _DATA_EXT for c in p.iterdir() if c.is_file()):
+            out.append(p.relative_to(ROOT).as_posix())
+    return out
+
+
+def _profiles(folder: Path) -> dict:
+    """Shared WMS profiles plus any wms*.yaml kept with the client's data (those stay local, never committed)."""
+    opts = {p.stem: p for p in sorted((ROOT / "wms_profiles").glob("*.yaml"))}
+    if folder.is_dir():
+        for p in sorted(folder.rglob("wms*.yaml")):
+            if "_ingest" in p.relative_to(folder).parts:  # outputs, not inputs
+                continue
+            opts[f"local: {p.relative_to(folder).as_posix()}"] = p
+    return opts
 
 
 def _signature(folder: Path) -> str:
@@ -84,13 +106,17 @@ def page():
         choice = st.selectbox("Client folder", folders + ["Other folder..."],
                               index=folders.index("data/synthetic/default") if "data/synthetic/default" in folders else 0)
         folder = st.text_input("Folder path", value=str(ROOT / "data")) if choice == "Other folder..." else str(ROOT / choice)
-        wms = sorted((ROOT / "wms_profiles").glob("*.yaml"))
-        wchoice = st.selectbox("WMS profile", [p.stem for p in wms] + [AUTO])
+        wms = _profiles(Path(folder))
+        names = list(wms) + [AUTO]
+        local = [n for n in names if n.startswith("local: ")]
+        default = local[0] if local else ("synthetic" if "synthetic" in names and "synthetic" in folder else names[0])
+        wchoice = st.selectbox("WMS profile", names, index=names.index(default), key=f"wmspick::{folder}",
+                               help="'local:' profiles live next to the client's data and are never committed.")
         profile_text = None
         if wchoice != AUTO:
             with st.expander("Edit WMS profile for this run"):
-                profile_text = st.text_area("YAML", (ROOT / "wms_profiles" / f"{wchoice}.yaml").read_text(encoding="utf-8"),
-                                            height=320, key=f"wms::{wchoice}",
+                profile_text = st.text_area("YAML", wms[wchoice].read_text(encoding="utf-8"),
+                                            height=320, key=f"wms::{wchoice}::{folder}",
                                             help="Try changing units to cm, or removing date_format.")
         with st.expander("Parameters (IngestParams)"):
             params = _param_controls()
