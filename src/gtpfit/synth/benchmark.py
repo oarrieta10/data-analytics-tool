@@ -1,6 +1,6 @@
 """benchmark.py — compare the shape of two warehouse datasets (e.g. a real client vs a synthetic one).
 
-    shape(orders, receipts=None, inventory=None, items=None) -> (metrics dict, series dict)
+    shape(orders, receipts=None, inventory=None, items=None, line_definition="row") -> (metrics, series)
     compare(a_metrics, b_metrics, names) -> DataFrame
 
 Inputs are canonical frames (ingest column names):
@@ -8,6 +8,9 @@ Inputs are canonical frames (ingest column names):
     receipts   receipt_id, sku, receipt_date, qty
     inventory  snapshot_date, sku, on_hand
     items      sku, unit_l, unit_w, unit_h, unit_weight, case_qty
+
+line_definition: what counts as an order line (gtpfit.lines; agree it with the
+client).  "row" = every file row; "order_sku" = repeated order + SKU rows merged.
 
 Only shape metrics (shares, ratios, per-order and per-day figures) so a real
 client and a synthetic one of a different size can be compared.  Used to
@@ -17,6 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from gtpfit.lines import define_lines
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -34,8 +39,8 @@ def _per_channel(o: pd.DataFrame, m: dict, tag: str):
     return per
 
 
-def shape(orders: pd.DataFrame, receipts=None, inventory=None, items=None):
-    o = orders.copy()
+def shape(orders: pd.DataFrame, receipts=None, inventory=None, items=None, line_definition: str = "row"):
+    o = define_lines(orders, line_definition, qty_col="units")
     o["order_date"] = pd.to_datetime(o["order_date"]).dt.normalize()
     m, s = {}, {}
     days = o["order_date"].nunique()
@@ -45,6 +50,8 @@ def shape(orders: pd.DataFrame, receipts=None, inventory=None, items=None):
     m["picking_days_per_week"] = days / span * 7
     m["lines"], m["orders"], m["units"], m["skus_picked"] = len(o), o["order_id"].nunique(), float(o["units"].sum()), \
         o["sku"].nunique()
+    m["picks_per_line"] = float(o["picks"].sum() / len(o))
+    s["line_definition"] = line_definition
 
     # channels
     for ch in ("Ecommerce", "Store"):

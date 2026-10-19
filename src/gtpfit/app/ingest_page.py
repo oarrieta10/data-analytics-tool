@@ -13,6 +13,7 @@ from gtpfit.app import ROOT
 from gtpfit.ingest import (IngestParams, ingest_folder, parse_wms_profile, profile_from_result,
                            save_wms_profile, write_outputs)
 from gtpfit.ingest.schema import TABLES
+from gtpfit.lines import LINE_DEFINITIONS, order_profile
 
 SEV_LABEL = {"block": "⛔ block", "accepted": "✅ accepted", "warn": "⚠️ warn", "info": "ℹ️ info"}
 AUTO = "(none: match columns automatically)"
@@ -94,6 +95,42 @@ def _param_controls() -> dict:
     return vals
 
 
+@st.cache_resource(max_entries=6, show_spinner=False)
+def _line_profiles(run_key: tuple, _orders: pd.DataFrame) -> pd.DataFrame:
+    return pd.concat([order_profile(_orders, how) for how in LINE_DEFINITIONS], ignore_index=True)
+
+
+def _order_lines_tab(r, run_key):
+    st.markdown("What counts as an order line is **agreed with the client**. Ingest keeps the file's rows as they "
+                "are; the definition is applied when the data is analysed. Both are shown so you can discuss them.")
+    for how, text in LINE_DEFINITIONS.items():
+        st.markdown(f"- `{how}`: {text}")
+    if "orders" not in r.tables:
+        st.info("No orders table.")
+        return
+    with st.spinner("Comparing line definitions..."):
+        prof = _line_profiles(run_key, r.tables["orders"])
+    merged = int(prof.loc[(prof.channel == "All") & (prof.definition == "row"), "lines"].iat[0] -
+                 prof.loc[(prof.channel == "All") & (prof.definition == "order_sku"), "lines"].iat[0])
+    if merged:
+        st.warning(f"{merged:,} rows repeat an order + SKU already on that order: the two definitions differ.",
+                   icon="⚠️")
+    else:
+        st.success("No order has the same SKU on more than one row: both definitions give the same answer.", icon="✅")
+    show = prof[["channel", "definition", "orders", "lines", "lines_per_order", "units_per_line", "units_per_order",
+                 "picks_per_line", "single_line_share"]]
+    st.dataframe(show, hide_index=True, width="stretch", column_config={
+        "orders": st.column_config.NumberColumn(format="localized"),
+        "lines": st.column_config.NumberColumn(format="localized"),
+        "lines_per_order": st.column_config.NumberColumn("lines / order", format="%.2f"),
+        "units_per_line": st.column_config.NumberColumn("units / line", format="%.2f"),
+        "units_per_order": st.column_config.NumberColumn("units / order", format="%.2f"),
+        "picks_per_line": st.column_config.NumberColumn("picks (rows) / line", format="%.2f"),
+        "single_line_share": st.column_config.NumberColumn("single-line orders", format="percent")})
+    st.caption("Units include full cases (cases x case pack) when the file has a cases column. Units per order is "
+               "the same under both definitions; only how units split into lines changes.")
+
+
 def page():
     st.title("1 · Ingest")
     st.caption("Client files in, canonical tables out (inches, pounds, dates). Problems that make the data "
@@ -132,7 +169,8 @@ def page():
         return
     try:
         with st.spinner("Ingesting..."):
-            r = _run(str(fpath), _signature(fpath), profile_text, json.dumps(params), tuple(sorted(accept)))
+            run_key = (str(fpath), _signature(fpath), profile_text, json.dumps(params), tuple(sorted(accept)))
+            r = _run(*run_key)
     except Exception as e:  # malformed profile YAML, unreadable file: show it
         st.error(f"Ingest failed: {e}")
         return
@@ -155,8 +193,11 @@ def page():
         c.metric(name, f"{len(df):,} rows", f"{rej:,} set aside" if rej else "none set aside",
                  delta_color="inverse" if rej else "off")
 
-    t_iss, t_tab, t_map, t_units, t_dates, t_rej, t_out = st.tabs(
-        ["Issues", "Tables", "Column mapping", "Units", "Dates", "Set-aside rows", "Outputs"])
+    t_iss, t_tab, t_lines, t_map, t_units, t_dates, t_rej, t_out = st.tabs(
+        ["Issues", "Tables", "Order lines", "Column mapping", "Units", "Dates", "Set-aside rows", "Outputs"])
+
+    with t_lines:
+        _order_lines_tab(r, run_key)
 
     with t_iss:
         show = st.pills("Show", list(SEV_LABEL.values()), default=list(SEV_LABEL.values()), selection_mode="multi")

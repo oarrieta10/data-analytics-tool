@@ -67,5 +67,8 @@ python -m pytest -q
 - Deterministic: every random draw goes through the profile's seed.
 - Docstring at the top of each module saying what it does and what it does not.
 - Always pass `encoding="utf-8"` when reading/writing text; Windows defaults to cp1252.
+- **What counts as an order line is a per-client choice** (`gtpfit/lines.py`: `row` = every file row,
+  `order_sku` = repeated order + SKU rows merged; `picks` keeps the row count). Ingest never merges rows;
+  analysis modules take `line_definition` as a parameter and the report states which one was used.
 - Ingest severities: `block` (refuse unless `accept=[code]`) · `warn` · `info`. Rows are never dropped
   silently — they go to `rejects` with a reason.
