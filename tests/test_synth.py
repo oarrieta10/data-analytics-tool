@@ -125,6 +125,28 @@ def _lift_cal(lifts):
     return pd.DataFrame({"event_lift": np.asarray(lifts, float)})
 
 
+# the "bigger baskets on peak days" shape (the default is neutral)
+BIGGER = dict(ecom_single_line_share=0.45, ecom_multi_line_geom_p=0.42,
+              ecom_single_unit_share=0.75, ecom_extra_units_geom_p=0.50)
+
+
+def test_default_peak_shape_is_neutral():
+    from gtpfit.synth.demand import day_shape
+    p = load_profile()
+    s = day_shape(p, _lift_cal([1.0, 2.0, 3.5]))
+    for c in SHAPE_COLS:
+        assert getattr(p.peak_shape, c) is None
+        assert (s[c] == getattr(p, c)).all(), c
+
+
+def test_unset_peak_value_follows_changed_base():
+    from gtpfit.synth.demand import day_shape
+    p = load_profile(ecom_single_line_share=0.9, peak_shape=dict(ecom_single_unit_share=0.7))
+    s = day_shape(p, _lift_cal([1.0, 2.0]))
+    assert (s["ecom_single_line_share"] == 0.9).all()
+    assert s["ecom_single_unit_share"].iloc[1] == pytest.approx(0.7)
+
+
 def _neutral_profile():
     p = load_profile()
     return load_profile(peak_shape={c: getattr(p, c) for c in SHAPE_COLS})
@@ -138,9 +160,9 @@ def test_day_shape_neutral_is_constant_base():
         assert (s[c] == getattr(p, c)).all(), c
 
 
-def test_day_shape_default_bigger_baskets_on_peak():
+def test_day_shape_bigger_baskets_on_peak():
     from gtpfit.synth.demand import day_shape
-    p = load_profile()
+    p = load_profile(peak_shape=BIGGER)
     lifts = [0.8, 1.0, 1.2, 1.6, 2.0, 2.6, 50]
     s = day_shape(p, _lift_cal(lifts))
     # quiet days use the base values exactly
@@ -173,7 +195,7 @@ def test_unknown_peak_shape_key_rejected():
 
 
 def test_peak_days_have_bigger_ecom_baskets(tmp_path):
-    generate(load_profile(n_skus=300, ecom_orders_per_day=400, b2b_orders_per_day=2,
+    generate(load_profile(n_skus=300, ecom_orders_per_day=400, b2b_orders_per_day=2, peak_shape=BIGGER,
                           start_date="2025-10-01", days=90), tmp_path)
     cal = pd.read_csv(tmp_path / "_truth/calendar.csv")
     assert set(SHAPE_COLS + ["event_lift"]) <= set(cal.columns)
@@ -218,7 +240,7 @@ def test_every_setting_has_ui_metadata():
             obj = {"Profile": p, "DefectRates": p.defects, "PeakShape": p.peak_shape}[cls.__name__]
             v = getattr(obj, f.name)
             vals = v.values() if isinstance(v, dict) else (v if isinstance(v, list) else [v])
-            assert all(lo <= x <= hi for x in vals), (f.name, v, lo, hi)
+            assert all(lo <= x <= hi for x in vals if x is not None), (f.name, v, lo, hi)
 
 
 @pytest.mark.parametrize("name", [None, "default", "messy_large", "playground"])
@@ -245,6 +267,6 @@ def test_estimate_close_to_generated(tmp_path):
 
 def test_preview_has_daily_shape():
     from gtpfit.synth.preview import preview
-    cal = preview(load_profile(start_date="2025-10-01", days=90))
+    cal = preview(load_profile(start_date="2025-10-01", days=90, peak_shape=BIGGER))
     assert len(cal) == 90 and {"volume_factor", "event_lift", "ecom_single_line_share"} <= set(cal.columns)
     assert cal["ecom_single_line_share"].min() < load_profile().ecom_single_line_share

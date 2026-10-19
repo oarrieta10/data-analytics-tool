@@ -10,8 +10,8 @@ Two channels share one catalogue:
 Daily volume = base x weekday factor x annual season x promotions x noise.
 Event lift = season x promotions (weekday and noise left out).  It drives the
 e-commerce basket shape: on event days the single-line and single-unit shares
-and the multi-line / multi-unit tails move towards `profile.peak_shape`
-(`day_shape`).  The effective values per day go into the calendar, which is
+and the multi-line / multi-unit tails move towards any values set in
+`profile.peak_shape` (`day_shape`; unset = no change, the default).  The effective values per day go into the calendar, which is
 written to _truth/calendar.csv.  Store orders keep one shape all year.
 Each SKU's share of a day's lines = popularity x lifecycle x its category's
 seasonality, so toys peak in December and sporting goods in summer.
@@ -80,7 +80,11 @@ def day_shape(p, cal: pd.DataFrame) -> pd.DataFrame:
     out = {}
     for c in _SHAPE:
         base = getattr(p, c)
-        out[c] = np.clip(base + (getattr(ps, c) - base) * t, _P_MIN, _P_MAX)
+        target = getattr(ps, c)
+        if target is None:  # unset: same as normal on peak days
+            out[c] = np.full(len(t), float(base))
+            continue
+        out[c] = np.clip(base + (target - base) * t, _P_MIN, _P_MAX)
         out[c][t == 0] = base  # quiet days: exactly the base value
     return pd.DataFrame(out, index=cal.index)
 

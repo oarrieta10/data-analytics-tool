@@ -47,6 +47,10 @@ def load_into_form(p: Profile) -> None:
     ss = st.session_state
     for owner, f in _fields():
         v = getattr(getattr(p, owner) if owner else p, f.name)
+        if f.metadata.get("pairs_with"):  # peak value: unset = same as normal
+            ss[key(f, "on")] = v is not None
+            if v is None:
+                v = getattr(p, f.metadata["pairs_with"])
         if f.name == "start_date":
             ss[key(f)] = dt.date.fromisoformat(v)
         elif f.name == "closed_dates":
@@ -72,6 +76,11 @@ def form_to_profile() -> Profile:
     data, sections = {}, {"defects": {}, "peak_shape": {}}
     for owner, f in _fields():
         default = getattr(getattr(base, owner) if owner else base, f.name)
+        if f.metadata.get("pairs_with") and not ss.get(key(f, "on")):
+            sections[owner][f.name] = None
+            continue
+        if f.metadata.get("pairs_with"):
+            default = 0.0
         if f.name == "start_date":
             v = ss[key(f)].isoformat()
         elif f.name == "closed_dates":
@@ -136,6 +145,12 @@ def _compound(f):
                        label_visibility="collapsed", placeholder="Add a date as MM-DD")
 
 
+def _start_from_normal(f, base_f):
+    """Turning a peak value on starts its slider at the current normal value."""
+    if st.session_state.get(key(f, "on")):
+        st.session_state[key(f)] = st.session_state[key(base_f)]
+
+
 def _new_seed(f):
     st.session_state[key(f)] = int(dt.datetime.now().timestamp() * 1000) % 2_000_000_000
 
@@ -160,10 +175,14 @@ def render_section(section: str) -> None:
             base_f = next(b for o, b in _fields() if o is None and b.name == md["pairs_with"])
             normal = ss.get(key(base_f))
             unit = "%" if _is_share(f) else ""
-            c1, c2 = st.columns([1, 3], vertical_alignment="center")
-            c1.caption(f"normal {normal:g}{unit}" if normal is not None else "")
-            with c2:
-                _scalar(f, label=f"{md['label']} on peak")
+            on = st.toggle(f"{md['label']}: different on peak days", key=key(f, "on"),
+                           on_change=_start_from_normal, args=(f, base_f),
+                           help=f"Off = same as normal ({normal:g}{unit}) on every day.")
+            if on:
+                c1, c2 = st.columns([1, 3], vertical_alignment="center")
+                c1.caption(f"normal {normal:g}{unit}" if normal is not None else "")
+                with c2:
+                    _scalar(f, label=f"{md['label']} on peak")
         elif f.type in ("list", "dict", list, dict):
             _compound(f)
         else:

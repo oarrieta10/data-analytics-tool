@@ -83,31 +83,31 @@ _PK = "Peak basket shape"
 class PeakShape:
     """E-commerce basket shape on event days (promotions, Q4 ramp).
 
-    Each value is what the matching Profile setting becomes on a day whose
-    event lift (season x promo, not weekday or noise) equals `reference_lift`.
-    In between, the setting is interpolated linearly from its base value; on
-    bigger events it is extrapolated up to `max_t` times the reference step
-    (default 1: none, because Black Friday's lift stacks promo on the Q4 ramp).
-    Days with lift <= 1 use the base values.  Set a value equal to its base to
-    switch that effect off; move it the other way for smaller peak baskets.
-    Defaults lean to bigger baskets on peak days (consultant judgement, low
-    confidence; varies by client).
+    Each value, when set, is what the matching Profile setting becomes on a day
+    whose event lift (season x promo, not weekday or noise) equals
+    `reference_lift`.  In between, the setting is interpolated linearly from its
+    normal value; on bigger events it is extrapolated up to `max_t` times the
+    reference step (default 1: none, because Black Friday's lift stacks promo on
+    the Q4 ramp).  Days with lift <= 1 use the normal values.
+    Unset (None, the default) = same as normal: no basket change on peak days.
+    Source: a real omnichannel client showed ~1.02x e-com lines per order on its
+    busiest days (2026-10 benchmark); other clients go either way.
     """
     reference_lift: float = knob(2.0, section=_PK, unit="x", lo=1.1, hi=4.0, step=0.1, label="Reference event lift",
                                  help="Event lift (season x promo) at which the peak values fully apply.")
     max_t: float = knob(1.0, section=_PK, lo=0.0, hi=3.0, step=0.1, label="Extrapolation cap",
                         help="1 = events bigger than the reference get the reference shape; "
                              ">1 lets them go further (Black Friday is ~3.5x).")
-    ecom_single_line_share: float = knob(0.45, section=_PK, unit="share", lo=0.05, hi=0.95,
+    ecom_single_line_share: float | None = knob(None, section=_PK, unit="share", lo=0.05, hi=0.95,
                                          pairs_with="ecom_single_line_share", label="Single-line orders",
                                          help="Share of e-com orders with one line on a reference event day.")
-    ecom_multi_line_geom_p: float = knob(0.42, section=_PK, lo=0.1, hi=0.95, step=0.01,
+    ecom_multi_line_geom_p: float | None = knob(None, section=_PK, lo=0.1, hi=0.95, step=0.01,
                                          pairs_with="ecom_multi_line_geom_p", label="Multi-line tail (p)",
                                          help="Lower = longer multi-line orders on peak days.")
-    ecom_single_unit_share: float = knob(0.75, section=_PK, unit="share", lo=0.05, hi=0.95,
+    ecom_single_unit_share: float | None = knob(None, section=_PK, unit="share", lo=0.05, hi=0.95,
                                          pairs_with="ecom_single_unit_share", label="Single-unit lines",
                                          help="Share of e-com lines with one unit on a reference event day.")
-    ecom_extra_units_geom_p: float = knob(0.50, section=_PK, lo=0.1, hi=0.95, step=0.01,
+    ecom_extra_units_geom_p: float | None = knob(None, section=_PK, lo=0.1, hi=0.95, step=0.01,
                                           pairs_with="ecom_extra_units_geom_p", label="Extra-units tail (p)",
                                           help="Lower = more units on multi-unit lines on peak days.")
 

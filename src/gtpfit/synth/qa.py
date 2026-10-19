@@ -23,8 +23,8 @@ CHECKS = [
     ("single_line", "E-commerce orders with a single line", 0.40, 0.65, "pct"),
     ("lines_per_order", "E-commerce lines per order", 1.5, 2.5, "num"),
     ("design_ratio", "Design day (95th percentile) / average day", 1.3, 1.8, "x"),
-    ("peak_ratio", "Peak day / average day", 2.0, 5.0, "x"),  # lines; promo baskets push e-com peaks past 4x
-    ("peak_basket", "E-commerce lines per order, top-5% days / other days", 1.0, 1.3, "x"),
+    ("peak_ratio", "Peak day / average day", 2.0, 5.0, "x"),  # lines; bigger peak baskets (if set) push past 4x
+    ("peak_basket", "E-commerce lines per order, top-5% days / other days", 0.9, 1.3, "x"),
     ("active_share", "Item-master SKUs picked during the year", 0.75, 0.95, "pct"),
     ("median_doh", "Median days on hand, SKUs that sell", 15, 60, "num"),
     ("turns", "Inventory turns per year", 6, 15, "num"),

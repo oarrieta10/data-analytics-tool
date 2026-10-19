@@ -32,9 +32,9 @@ b2b_orders_per_day: 15
 # daily_noise_cv: 0.08
 
 # --- peak-day basket shape (e-commerce) ---
-# Values that apply on a day with event lift = reference_lift (season x promo).
-# Interpolated from the base values above; equal to base = no change;
-# the other side of base = smaller baskets on peaks.
+# Off by default: baskets look the same every day. Set a value to change it on
+# event days (lift = season x promo); it applies fully at reference_lift.
+# Example below = bigger baskets on peaks; the other side of normal = smaller.
 # peak_shape:
 #   reference_lift: 2.0
 #   max_t: 1.0                   # >1 lets bigger events (Black Friday ~3.5x) go further

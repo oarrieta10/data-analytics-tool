@@ -57,3 +57,12 @@ def test_generate_tiny_dataset(tmp_path):
     at.button(key="syn::generate").click().run()
     assert not at.exception, at.exception
     assert (tmp_path / "tiny" / "orders.csv").exists()
+
+
+def test_peak_toggle_reveals_slider():
+    at = _app()
+    base = "syn::Peak basket shape::ecom_single_line_share"
+    assert not [s for s in at.slider if s.key == base]
+    at.toggle(key=base + "::on").set_value(True).run()
+    assert not at.exception
+    assert at.slider(key=base).value == at.slider(key="syn::E-commerce orders::ecom_single_line_share").value
