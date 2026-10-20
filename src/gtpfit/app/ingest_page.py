@@ -108,13 +108,13 @@ def _run(assign_key: tuple, profile_text: str | None, params_json: str, accept: 
 
 def _sources_table(rows: list, sig: str) -> dict:
     """The guess-then-confirm table; returns {table: [Source]} for the rows not set to Ignore."""
-    df = pd.DataFrame(rows)
+    # read from the row dicts, not a DataFrame: pandas turns a missing guess / part (None) into NaN
     view = pd.DataFrame({
-        "Use as": [USE_AS[g] for g in df["guess"]],
-        "Source (file > sheet / table)": df["source"],
-        "Guess": [USE_AS[g] if g else "—" for g in df["guess"]],
-        "Confidence": [CONF_LABEL[c] for c in df["confidence"]],
-        "Why": df["why"],
+        "Use as": [USE_AS[r["guess"]] for r in rows],
+        "Source (file > sheet / table)": [r["source"] for r in rows],
+        "Guess": [USE_AS[r["guess"]] if r["guess"] else "—" for r in rows],
+        "Confidence": [CONF_LABEL[r["confidence"]] for r in rows],
+        "Why": [r["why"] for r in rows],
     })
     edited = st.data_editor(
         view, hide_index=True, width="stretch", key=f"srcs::{sig}",
@@ -127,7 +127,7 @@ def _sources_table(rows: list, sig: str) -> dict:
     for i, label in enumerate(edited["Use as"]):
         table = _LABEL_TO_TABLE[label]
         if table:
-            assign.setdefault(table, []).append(Source(Path(df["path"].iat[i]), df["part"].iat[i]))
+            assign.setdefault(table, []).append(Source(Path(rows[i]["path"]), rows[i]["part"]))
     return assign
 
 

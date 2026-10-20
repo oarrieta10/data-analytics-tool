@@ -86,6 +86,8 @@ def test_ingest_page_guesses_and_ingests(tmp_path, monkeypatch):
     for f in ("item_master.csv", "orders.csv", "receipts.csv", "inventory_snapshots.csv"):
         shutil.copy(src / f, client / f)
     (client / "notes.md").write_text("not data", encoding="utf-8")
+    # readable data that matches no table: its guess is None (this crashed the page once)
+    (client / "contacts.csv").write_text("Name,Phone\nAna,555\n", encoding="utf-8")
     monkeypatch.setenv("GTPFIT_WORKSPACE", str(ws))
     at = AppTest.from_string(INGEST, default_timeout=180).run()
     assert not at.exception, at.exception
@@ -96,7 +98,8 @@ def test_ingest_page_guesses_and_ingests(tmp_path, monkeypatch):
     assert guesses.loc["receipts.csv", "Use as"] == "Receipts (inbound)"
     assert guesses.loc["inventory_snapshots.csv", "Use as"] == "Inventory"
     assert "notes.md" not in guesses.index  # not a data file
-    assert (guesses["Confidence"] == "high").all()
+    assert guesses.loc["contacts.csv", "Use as"] == "Ignore"
+    assert (guesses.drop(index="contacts.csv")["Confidence"] == "high").all()
     at.button(key="ing::go").click().run()
     assert not at.exception, at.exception
     assert any("Ready" in s.value for s in at.success), [e.value for e in at.error]
