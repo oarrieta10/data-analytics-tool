@@ -203,3 +203,94 @@ def test_chosen_column_lets_unrecognised_date_through(tmp_path):
     after = ingest_sources(assign, profile=prof, strict=False)
     assert len(after.tables["receipts"]) == len(rec)
     assert not set(after.issues.loc[after.issues.table == "receipts", "severity"]) & {"block"}
+
+
+# ---- per-client memory: mapping and units saved automatically, synonyms learned --------------------------
+
+@pytest.fixture
+def learned(tmp_path, monkeypatch):
+    monkeypatch.setenv("GTPFIT_SYNONYMS", str(tmp_path / "learned.yaml"))  # never the repo's file
+    return tmp_path / "learned.yaml"
+
+
+def _again(tmp_path, monkeypatch, folder):
+    """A later session for the same (now recent) client."""
+    return _app(tmp_path, monkeypatch, folder=folder, client=None, **{"ing::client_pick": "Acme"})
+
+
+def test_no_profile_picker_and_no_save_button(tmp_path, monkeypatch, learned):
+    folder = _copy(tmp_path / "client")
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    assert not [s for s in at.selectbox if "WMS" in s.label]
+    at = _next(_next(at, "ing::to2"), "ing::run")
+    assert not [b for b in at.button if "Save WMS profile" in b.label]
+
+
+def test_mapping_saved_automatically_and_reloaded(tmp_path, monkeypatch, learned):
+    import yaml
+    folder = _copy(tmp_path / "client")
+    at = _next(_next(_app(tmp_path, monkeypatch, folder=folder), "ing::to2"), "ing::run")
+    prof = yaml.safe_load((tmp_path / "ws" / "Acme" / "wms_acme.yaml").read_text(encoding="utf-8"))
+    assert prof["columns"]["item_master"]["sku"] == "Item Number" and "Item Number" in prof["headers"]["item_master"]
+    # same extract resent: reused, and said so
+    at = _next(_again(tmp_path, monkeypatch, folder), "ing::to2")
+    labels = [e.label for e in at.expander if e.label.startswith("Column mapping")]
+    assert labels and all(lbl.endswith("last confirmed mapping") for lbl in labels)
+    assert any("Using last confirmed mapping" in i.value for i in at.info)
+    # a different item-master export: matched afresh (the other tables still reuse theirs)
+    im = pd.read_csv(SAMPLE / "item_master.csv", dtype=str).rename(columns={
+        "Item Description": "Desc", "Category": "Dept", "Sub Category": "Class", "Case Length": "Ctn L",
+        "Case Width": "Ctn W", "Case Height": "Ctn H"})
+    other = _copy(tmp_path / "client2", item_master=im)
+    at = _next(_again(tmp_path, monkeypatch, other), "ing::to2")
+    by = {lbl.split(":")[1].split("(")[0].strip(): lbl for lbl in (e.label for e in at.expander)
+          if lbl.startswith("Column mapping")}
+    assert not by["Item master"].endswith("last confirmed mapping")
+    assert by["Order history"].endswith("last confirmed mapping")
+
+
+def test_unit_decision_persists_per_client(tmp_path, monkeypatch, learned):
+    import yaml
+    im = pd.read_csv(SAMPLE / "item_master.csv", dtype={"Item Number": str})
+    dims = ["Unit Length", "Unit Width", "Unit Height", "Case Length", "Case Width", "Case Height"]
+    im[dims] = (im[dims] * 2.54).round(2)                                   # centimetres,
+    im[["Unit Weight", "Case Weight"]] = (im[["Unit Weight", "Case Weight"]] / 2.20462262185).round(3)  # kilograms
+    folder = _copy(tmp_path / "client", item_master=im)                     # no unit in any column name
+    at = _next(_next(_app(tmp_path, monkeypatch, folder=folder), "ing::to2"), "ing::run")
+    key = "item_master:unit_ambiguous"
+    assert any("BLOCKED" in e.value for e in at.error)
+    pick = at.selectbox(key=f"unitpick::{key}")
+    assert any(o.startswith("cm / kg") for o in pick.options)
+    pick.select(next(o for o in pick.options if o.startswith("cm / kg"))).run()
+    at = _next(at, f"unituse::{key}")
+    assert not [e for e in at.error if "BLOCKED" in e.value]
+    prof = yaml.safe_load((tmp_path / "ws" / "Acme" / "wms_acme.yaml").read_text(encoding="utf-8"))
+    assert prof["units"] == {"length": "cm", "weight": "kg"}
+    # next session, same client: the decision is already made
+    at = _next(_next(_again(tmp_path, monkeypatch, folder), "ing::to2"), "ing::run")
+    assert not [e for e in at.error if "BLOCKED" in e.value]
+    assert not at.button(key="ing::to4").disabled
+
+
+def test_remember_synonym_teaches_automatic_matching(tmp_path, monkeypatch, learned):
+    import yaml
+    im = pd.read_csv(SAMPLE / "item_master.csv", dtype=str).rename(columns={"Item Number": "STOCKCODE"})
+    folder = _copy(tmp_path / "client", item_master=im)
+    # a hand-made match confirmed earlier for this client: STOCKCODE is the SKU
+    hdr = list(im.columns)
+    cols = {"sku": "STOCKCODE", "description": "Item Description", "unit_l": "Unit Length", "unit_w": "Unit Width",
+            "unit_h": "Unit Height", "unit_weight": "Unit Weight", "case_qty": "Case Pack"}
+    acme = tmp_path / "ws" / "Acme"
+    acme.mkdir(parents=True)
+    (acme / "wms_acme.yaml").write_text(yaml.safe_dump({"name": "Acme", "columns": {"item_master": cols},
+                                                        "headers": {"item_master": hdr},
+                                                        "saved_at": "2026-10-20T10:00:00"}), encoding="utf-8")
+    at = _next(_again(tmp_path, monkeypatch, folder), "ing::to2")
+    btn = "syn::item_master::sku::STOCKCODE"
+    assert at.button(key=btn).label.startswith("Remember this synonym")
+    at = _next(at, btn)
+    assert "stockcode" in learned.read_text(encoding="utf-8")
+    # a brand-new client with the same kind of export: matched automatically now
+    at = _next(_app(tmp_path, monkeypatch, folder=folder, client="Beta"), "ing::to2")
+    assert not [m for m in at.markdown if "SKU / item number is required" in m.value]
+    assert not at.button(key="ing::run").disabled

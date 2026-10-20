@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from gtpfit.ingest import Source, profile_from_result, save_wms_profile
+from gtpfit.ingest import Source
 from gtpfit.ingest.exports import client_rejects
 from gtpfit.ingest.receipt import data_receipt
 
@@ -19,7 +19,7 @@ from . import state, widgets
 def current_result():
     """Run (or reuse) ingest for the confirmed files, profile, thresholds and accepted blocks."""
     assign = {t: [Source(Path(p), part) for p, part in srcs] for t, srcs in st.session_state["ing::assign"].items()}
-    spec = state.run_spec(assign, st.session_state.get("ing::profile_eff"))
+    spec = state.run_spec(assign, state.run_profile_text(st.session_state.get("ing::overrides")))
     return state.run_ingest(spec, state.input_files(), st.session_state.get("ing::expected")), spec
 
 
@@ -56,14 +56,8 @@ def show() -> None:
         widgets.details(r, state.run_key(spec, state.input_files()))
 
     st.divider()
-    c1, c2, c3, c4 = st.columns([1.2, 1.3, 1, 1.6])
-    if c1.button("Save WMS profile", key="ing::saveprof",
-                 help=f"Saves this run's columns, units and date format to {state.client_profile_path().name}."):
-        prof = profile_from_result(r, state.client())
-        save_wms_profile(prof, state.client_profile_path())
-        st.toast(f"Saved {state.client_profile_path().name}")
-    dets = state.detections(state.signature(state.input_files()), tuple(str(p) for p in state.input_files()),
-                            state.params_json())
+    c2, c3, c4 = st.columns([1.3, 1, 1.6])
+    dets = state.detected(state.input_files())
     c2.download_button("Download data receipt",
                        data_receipt(r, state.client(), dets, st.session_state.get("ing::requested")).encode("utf-8"),
                        f"{state.client()}_data_receipt.html", "text/html", key="ing::dl_receipt")

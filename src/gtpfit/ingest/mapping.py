@@ -1,11 +1,14 @@
 """mapping.py — which client column is which canonical field; saved WMS profiles.
 
     suggest_mapping(headers, table) -> Mapping   automatic, from schema synonyms
-    load_wms_profile(path) / save_wms_profile(profile, path)
+    load_wms_profile(path) / save_wms_profile(profile, path) / saved_mapping_for(profile, table, headers)
 
-A WMS profile records, for one client system's exports: the column for each
-canonical field, file name patterns, the declared length/weight units and the
-date format.  Once confirmed for a WMS it is reused for every client on it.
+A profile records, for one client's exports: the column for each canonical
+field (and every column name of the file it was confirmed on), file name
+patterns, the length/weight units and the date format.  The workbench saves
+one per client automatically and reuses it when a new file's columns overlap
+(saved_mapping_for); extracts differ even on the same WMS, so profiles are
+not shared across clients.
 
 Does not read data values; unit and date detection live in units.py / coerce.py.
 """
@@ -19,17 +22,7 @@ from pathlib import Path
 import yaml
 
 from .params import IngestParams
-from .schema import TABLES
-
-_UNIT_TAIL = r"(in|inch|inches|cm|mm|m|ft|lb|lbs|pound|pounds|kg|kgs|g|gr|grams|oz|ounces|ea|each)"
-
-
-def normalise_header(h: str) -> str:
-    s = str(h).lower()
-    s = re.sub(r"\(.*?\)|\[.*?\]", " ", s)           # "(cm)", "[lbs]"
-    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-    s = re.sub(rf"\s+{_UNIT_TAIL}$", "", s)            # trailing "in", "kg", ...
-    return s
+from .schema import TABLES, normalise_header, synonyms  # noqa: F401 (normalise_header re-exported)
 
 
 @dataclass
@@ -53,7 +46,7 @@ def suggest_mapping(headers, table: str, params: IngestParams | None = None) -> 
     # database-style names match too: partnumber = part number, customerorderno = customer order no.
     cand = []
     for f in flds:
-        syn = [normalise_header(s) for s in f.synonyms]
+        syn = list(synonyms(table, f.name))  # built-in + learned
         compact = [s.replace(" ", "") for s in syn]
         for h, n in norm.items():
             if n.replace(" ", "") in compact:
@@ -121,6 +114,27 @@ class WmsProfile:
     files: dict = field(default_factory=dict)        # table -> glob pattern
     sheets: dict = field(default_factory=dict)       # table -> sheet name (Excel)
     columns: dict = field(default_factory=dict)      # table -> {field: header}
+    headers: dict = field(default_factory=dict)      # table -> every column name of the file it was confirmed on
+    saved_at: str = ""                               # when the mapping was last confirmed
+
+
+def saved_mapping_for(profile: WmsProfile | None, table: str, headers, min_overlap: float | None = None) -> dict | None:
+    """The client's last confirmed mapping for this table, if the new file looks like the same extract.
+
+    Same extract = every mapped column is still there, and the column names overlap the ones it was confirmed
+    on by at least min_overlap (Jaccard; IngestParams.mapping_reuse_min_overlap).  Otherwise None: match afresh.
+    """
+    if profile is None or not profile.columns.get(table):
+        return None
+    min_overlap = IngestParams().mapping_reuse_min_overlap if min_overlap is None else min_overlap
+    cols = profile.columns[table]
+    now = {h for h in headers if h}
+    if any(h not in now for h in cols.values()):
+        return None
+    seen = set(profile.headers.get(table) or cols.values())
+    if len(now & seen) / len(now | seen) < min_overlap:
+        return None
+    return dict(cols)
 
 
 def load_wms_profile(path) -> WmsProfile:

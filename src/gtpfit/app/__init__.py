@@ -8,4 +8,4 @@ Needs the optional extra: pip install -e .[app]
 """
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]  # repo root: profiles/, wms_profiles/, data/
+ROOT = Path(__file__).resolve().parents[3]  # repo root: data/

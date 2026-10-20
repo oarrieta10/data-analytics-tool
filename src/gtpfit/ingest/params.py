@@ -45,6 +45,11 @@ class IngestParams:
 
     # Header matching: minimum similarity (difflib ratio) for a fuzzy match.
     fuzzy_header_cutoff: float = 0.86
+    # Reuse a client's last confirmed column mapping when a new file's column
+    # names overlap the old file's by at least this share (Jaccard).  A resent
+    # or refreshed extract keeps nearly all columns; a different export does not.
+    # Source: consultant judgement.  Confidence: medium.
+    mapping_reuse_min_overlap: float = 0.8
 
     # Unit sanity bands for an assortment's medians, in inches / lb / ft3.
     # Source: consultant judgement for mixed consumer goods; dense categories

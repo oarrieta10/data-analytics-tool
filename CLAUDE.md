@@ -25,7 +25,8 @@ interactive HTML report.
     openpyxl/xlrd/pyxlsb; title rows skipped), JSON/JSONL, Parquet, Feather/Arrow, ORC, SQLite, DuckDB.
     A `Source(path, part)` is a file or one sheet / table / zip member. Not handled: Access, live DB
     connections, SQL dumps, fixed-width reports.
-  - `classify.py` guess the table each source holds (consultant confirms) · `mapping.py` auto-match + WMS profiles
+  - `classify.py` guess the table each source holds (consultant confirms) · `mapping.py` auto-match, profile storage,
+    `saved_mapping_for` (reuse a client's last confirmed mapping when the headers overlap)
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision
   - `checks.py` issue record, `ISSUE_TEXT` (title / plain meaning / design impact per code), accepting blocks, gaps
   - `detect.py` per file / sheet: table guess, read-as, row count · `coverage.py` period covered, gaps, peak flag
@@ -36,11 +37,12 @@ interactive HTML report.
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
   - `app/ingest/` guided flow 1 Upload → 2 Confirm files → 3 Review → 4 Done (`state.py` session + files,
     `widgets.py` shared pieces); dropped files go to a temp folder removed at Done
-- `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml`, `client.yaml`
-  (git-ignored; raw dropped files are not kept)
+- `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
+  date format; saved automatically), `client.yaml` (git-ignored; raw dropped files are not kept)
+- `src/gtpfit/ingest/learned_synonyms.yaml` — client column names taught with "Remember this synonym" (global;
+  committed; column names only, never values)
 - `tests/fixtures/` — frozen sample client (`sample_client/`, its WMS profile, expected findings) and
   Excel fixtures (.xls/.xlsb/.xlsm need Excel to make: `make_excel_fixtures.py`); see its README
-- `wms_profiles/` — saved column mappings per client WMS
 - `tests/` — pytest; run `python -m pytest -q`
 
 ## Planned modules (build in this order; tests first for each)
@@ -88,5 +90,10 @@ python -m pytest -q
 - Ingest severities: `block` (refuse unless accepted **with a reason**: `accept={"table:code": reason}`;
   the reason goes to `accepted_blocks.csv` and the data receipt) · `warn` · `info`. Rows are never dropped
   silently — they go to `rejects` with a reason. Every issue code needs an `ISSUE_TEXT` entry (a test checks).
+- **Mappings are per client and automatic** (no WMS-profile picker, no save button). The confirmed column
+  mapping, units and date format are saved to the client's `wms_<client>.yaml`; a new file whose headers
+  overlap the saved ones (`mapping_reuse_min_overlap`) reuses it ("using last confirmed mapping"). A hand
+  correction can be taught globally with "Remember this synonym" (`schema.remember_synonym`). No shared
+  cross-client profiles: revisit after about ten clients. `--wms FILE` on the CLI still takes any profile YAML.
 - Coverage: orders should span 12 months (`min_coverage_days`) and the peak months (`peak_months`); short or
   peak-less history is a warning, not a block.

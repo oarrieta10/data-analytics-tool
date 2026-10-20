@@ -22,7 +22,8 @@ import streamlit as st
 import yaml
 
 from gtpfit.app import ROOT
-from gtpfit.ingest import IngestParams, Source, ingest_sources, parse_wms_profile
+from gtpfit.ingest import IngestParams, Source, ingest_sources, load_wms_profile, parse_wms_profile, save_wms_profile
+from gtpfit.ingest.mapping import WmsProfile
 from gtpfit.ingest.detect import detect
 from gtpfit.ingest.schema import TABLE_LABEL
 
@@ -139,30 +140,85 @@ def detections(sig: str, paths: tuple, params_json: str):
     return detect([Path(p) for p in paths], IngestParams(**params_from_json(params_json)))
 
 
-# ---- WMS profiles ----------------------------------------------------------------------------
-
-AUTO = "Auto-detect"
-
-
-def profiles() -> dict:
-    """Shared profiles (wms_profiles/), plus this client's own and any wms*.yaml beside folder-mode files."""
-    opts = {p.stem: p for p in sorted((ROOT / "wms_profiles").glob("*.yaml"))}
-    for base in [client_dir(client()) if client() else None, input_folder() if mode() == "A folder" else None]:
-        if base and base.is_dir():
-            for p in sorted(base.rglob("wms*.yaml")):
-                if "_ingest" not in p.relative_to(base).parts:
-                    opts[f"{base.name}: {p.name}"] = p
-    return opts
-
-
-def profile_text() -> str | None:
-    choice = ss().get("ing::wms", AUTO)
-    p = profiles().get(choice)
-    return p.read_text(encoding="utf-8") if p else None
-
+# ---- the client's remembered mapping (saved automatically; no profile picking) ------------------------
 
 def client_profile_path() -> Path:
     return client_dir(client()) / f"wms_{safe_name(client()).replace(' ', '_').lower()}.yaml"
+
+
+def client_profile() -> WmsProfile | None:
+    """This client's last confirmed columns, units and date format, if any."""
+    p = client_profile_path()
+    if not client() or not p.exists():
+        return None
+    try:
+        return load_wms_profile(p)
+    except Exception:  # an unreadable profile must not stop ingest; matching starts afresh
+        return None
+
+
+def save_client_profile(columns=None, headers=None, sheets=None, files=None, units=None,
+                        date_format=None) -> WmsProfile:
+    """Merge confirmed decisions into the client's profile and save it (tables not given are kept)."""
+    prof = client_profile() or WmsProfile(name=client(), description=f"Confirmed for {client()} in the workbench")
+    for attr, new in (("columns", columns), ("headers", headers), ("sheets", sheets), ("files", files)):
+        if new:
+            getattr(prof, attr).update(new)
+    if units:
+        prof.units = dict(units)
+    if date_format:
+        prof.date_format = date_format
+    prof.saved_at = dt.datetime.now().isoformat(timespec="seconds")
+    save_wms_profile(prof, client_profile_path())
+    return prof
+
+
+def detected(files) -> list:
+    """What each file is: cached detection, then the client's remembered mappings applied."""
+    if not files:
+        return []
+    return with_memory(detections(signature(files), tuple(str(p) for p in files), params_json()))
+
+
+def with_memory(dets: list) -> list:
+    """Detections, re-guessed where a file matches a mapping confirmed earlier for this client."""
+    from gtpfit.ingest.mapping import saved_mapping_for
+    from gtpfit.ingest.readers import headers as source_headers
+    prof = client_profile()
+    if prof is None or not prof.columns:
+        return dets
+    out = []
+    for d in dets:
+        try:
+            hdr = source_headers(d.source)
+        except Exception:  # unreadable: keep the detection as it is
+            out.append(d)
+            continue
+        hit = next((t for t in prof.columns if saved_mapping_for(prof, t, hdr)), None)
+        out.append(dataclasses.replace(d, table=hit, confidence="high",
+                                       reason="matches the columns confirmed last time for this client")
+                   if hit else d)
+    return out
+
+
+def chosen_units() -> dict:
+    """Units for this run: picked on the Review screen this session, else remembered for the client."""
+    prof = client_profile()
+    return ss().get("ing::units") or (dict(prof.units) if prof and prof.units else {})
+
+
+def run_profile_text(overrides: dict | None = None) -> str | None:
+    """The profile ingest runs with: remembered units / date format plus the columns confirmed this time
+    (only tables whose mapping differs from automatic matching need to be spelled out)."""
+    prof = client_profile()
+    d: dict = {"name": client() or "workbench"}
+    if chosen_units():
+        d["units"] = chosen_units()
+    if prof and prof.date_format:
+        d["date_format"] = prof.date_format
+    if overrides:
+        d["columns"] = overrides
+    return yaml.safe_dump(d, sort_keys=False, allow_unicode=True) if len(d) > 1 else None
 
 
 # ---- thresholds --------------------------------------------------------------------------------

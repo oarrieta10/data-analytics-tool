@@ -10,11 +10,28 @@ Field kinds:
     cases   full cases on an order line (units = eaches + cases x case pack)
 
 Synonyms are compared after normalise_header() (lower case, punctuation and a
-trailing unit hint removed).  They are generic WMS/ERP vocabulary.
+trailing unit hint removed).  They are generic WMS/ERP vocabulary, plus the
+client column names consultants confirmed with "Remember this synonym" in the
+workbench (learned_synonyms.yaml next to this file; see synonyms()).
 """
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+_UNIT_TAIL = r"(in|inch|inches|cm|mm|m|ft|lb|lbs|pound|pounds|kg|kgs|g|gr|grams|oz|ounces|ea|each)"
+
+
+def normalise_header(h: str) -> str:
+    s = str(h).lower()
+    s = re.sub(r"\(.*?\)|\[.*?\]", " ", s)           # "(cm)", "[lbs]"
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    s = re.sub(rf"\s+{_UNIT_TAIL}$", "", s)            # trailing "in", "kg", ...
+    return s
 
 
 @dataclass(frozen=True)
@@ -169,6 +186,51 @@ def could_be(table: str, mapped) -> bool:
     if table in IDENTIFY_BY:
         return "sku" in mapped and len(mapped & set(IDENTIFY_BY[table])) >= IDENTIFY_MIN
     return all(f.name in mapped for f in TABLES[table] if f.required)
+
+
+# ---- learned synonyms: client column names confirmed by consultants, shared by every client ----------
+
+LEARNED_SYNONYMS = Path(__file__).with_name("learned_synonyms.yaml")
+_learned_cache: dict = {}
+
+
+def _learned_path() -> Path:
+    return Path(os.environ.get("GTPFIT_SYNONYMS", LEARNED_SYNONYMS))  # env: tests use their own file
+
+
+def learned_synonyms() -> dict:
+    """{table: {field: [normalised header, ...]}} from the learned file (re-read when it changes)."""
+    p = _learned_path()
+    stamp = (str(p), p.stat().st_mtime_ns) if p.exists() else (str(p), None)
+    if _learned_cache.get("stamp") != stamp:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else None
+        _learned_cache.update(stamp=stamp, data=data or {})
+    return _learned_cache["data"]
+
+
+def synonyms(table: str, name: str) -> tuple:
+    """Built-in synonyms for a field, then the learned ones (all normalised)."""
+    f = field(table, name)
+    built = [normalise_header(s) for s in f.synonyms]
+    learned = [s for s in (learned_synonyms().get(table) or {}).get(name) or [] if s not in built]
+    return tuple(built + learned)
+
+
+def remember_synonym(table: str, name: str, header: str) -> bool:
+    """Add a client column name to a field's synonyms for every future client.  False if already known."""
+    if table not in TABLES or name not in {f.name for f in TABLES[table]}:
+        raise ValueError(f"Unknown field {table}.{name}")
+    n = normalise_header(header)
+    if not n or n in synonyms(table, name) or n.replace(" ", "") in {s.replace(" ", "") for s in synonyms(table, name)}:
+        return False
+    data = {t: {k: list(v) for k, v in (fs or {}).items()} for t, fs in learned_synonyms().items()}
+    data.setdefault(table, {}).setdefault(name, []).append(n)
+    p = _learned_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("# Client column names confirmed by consultants with \"Remember this synonym\" (workbench\n"
+                 "# Confirm step).  Normalised (lower case, no punctuation).  Column names only, never data.\n"
+                 + yaml.safe_dump(data, sort_keys=True, allow_unicode=True), encoding="utf-8")
+    return True
 
 
 def fields(table: str) -> list[Field]:

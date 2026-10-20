@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from gtpfit.ingest import write_outputs
+from gtpfit.ingest import profile_from_result, write_outputs
 
 from . import state, widgets
 
@@ -16,8 +16,9 @@ def show() -> None:
     if "ing::out" not in st.session_state:
         out = write_outputs(final["result"], state.output_dir(), client=state.client(),
                             detections=final["detections"], requested=final["requested"])
-        state.write_client_yaml(state.client(), wms_profile=st.session_state.get("ing::wms"),
-                                mode=state.mode(), outputs=str(out))
+        used = profile_from_result(final["result"], state.client())  # the units and date format ingest used
+        state.save_client_profile(units=used.units, date_format=used.date_format)
+        state.write_client_yaml(state.client(), mode=state.mode(), outputs=str(out))
         if state.mode() == "Drop files":
             state.remove_uploads()
         st.session_state["ing::out"] = str(out)

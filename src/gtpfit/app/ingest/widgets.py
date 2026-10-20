@@ -29,30 +29,25 @@ def stepper(current: int) -> None:
 
 
 def header(editable: bool) -> None:
-    """Client · WMS profile · local-data badge.  Editable on Upload; a summary line afterwards."""
+    """Client · local-data badge.  Editable on Upload; a summary line afterwards."""
     if not editable:
-        prof = st.session_state.get("ing::wms", state.AUTO)
-        st.caption(f"Client: **{state.client()}** · WMS profile: **{prof}** · 🔒 Data stays on this computer")
+        prof = state.client_profile()
+        memory = f"mapping remembered from {prof.saved_at[:10]}" if prof and prof.saved_at else \
+            "first ingest: columns matched automatically"
+        st.caption(f"Client: **{state.client()}** · {memory} · 🔒 Data stays on this computer")
         return
-    c1, c2, c3 = st.columns([2, 2, 1.2], vertical_alignment="bottom")
+    c1, c3 = st.columns([3, 1.2], vertical_alignment="bottom")
     with c1:
         recent = state.recent_clients()
         options = recent + [state.NEW_CLIENT]
         pick = st.selectbox("Client", options, key="ing::client_pick",
-                            help="Required. Outputs and the client's WMS profile are kept under data/workspace/"
-                                 "<client>/ on this computer.")
+                            help="Required. Outputs and the client's confirmed column mapping and units are kept "
+                                 "under data/workspace/<client>/ on this computer and reused next time.")
         if pick == state.NEW_CLIENT:
             name = st.text_input("New client name", key="ing::client_new", placeholder="e.g. Acme Retail")
         else:
             name = pick
         st.session_state["ing::client"] = state.safe_name(name)
-    with c2:
-        names = [state.AUTO] + list(state.profiles())
-        cur = st.session_state.get("ing::wms")
-        default = cur if cur in names else next((n for n in names if n.startswith(f"{state.client()}:")), state.AUTO)
-        st.session_state["ing::wms"] = st.selectbox(
-            "WMS profile", names, index=names.index(default), key=f"ing::wms_pick::{state.client()}",
-            help="Column names, units and date format for a client system. Auto-detect matches columns by name.")
     c3.markdown("🔒 **Data stays on this computer**")
 
 
@@ -141,6 +136,8 @@ def block_cards(result) -> None:
             if t.what:
                 st.caption(t.what)
             st.markdown(f"**Design impact:** {t.impact}")
+            if is_open and first.code in UNIT_CODES:
+                _unit_picker(result, key)
             if is_open:
                 c1, c2 = st.columns([1, 2])
                 asked = key in requested
@@ -160,6 +157,43 @@ def block_cards(result) -> None:
                 if st.button("Undo", key=f"accundo::{key}"):
                     accept.pop(key, None)
                     st.rerun()
+
+
+UNIT_CODES = ("unit_ambiguous", "unit_mismatch")
+
+
+def unit_options(evidence) -> list[tuple]:
+    """(length, weight, label) for the unit pairs that fit the data (all pairs if none fits), best first."""
+    if evidence is None or not len(evidence):
+        return []
+    ev = evidence[evidence["group"] == "unit"] if (evidence["group"] == "unit").any() else evidence
+    fit = ev[ev["plausible"] & ev["evidence"]]
+    rows = fit if len(fit) else ev
+    out = []
+    for r in rows.itertuples():
+        bits = []
+        if r.median_longest_in == r.median_longest_in:  # not NaN
+            bits.append(f"median longest side {r.median_longest_in:.1f} in")
+        if r.median_density_lb_ft3 == r.median_density_lb_ft3:
+            bits.append(f"{r.median_density_lb_ft3:.1f} lb/ft³")
+        out.append((r.length, r.weight, f"{r.length} / {r.weight}" + (f" ({', '.join(bits)})" if bits else "")))
+    return out
+
+
+def _unit_picker(result, key: str) -> None:
+    """Decide the units here; the choice is saved for the client and used for every later file."""
+    opts = unit_options(result.unit_evidence)
+    if not opts:
+        return
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+    pick = c1.selectbox("Units this client uses (pairs that fit the data)", [o[2] for o in opts],
+                        key=f"unitpick::{key}")
+    if c2.button("Use these units", key=f"unituse::{key}", type="primary"):
+        length, weight, _ = next(o for o in opts if o[2] == pick)
+        units = {"length": length, "weight": weight}
+        st.session_state["ing::units"] = units
+        state.save_client_profile(units=units)
+        st.rerun()
 
 
 def coverage_panel(result) -> None:

@@ -74,8 +74,7 @@ def show() -> None:
             if choice == "Other folder…" else str(ROOT / choice) if choice else ""
         st.session_state["ing::folder_path"] = path
     files = state.input_files()
-    dets = state.detections(state.signature(files), tuple(str(p) for p in files), state.params_json()) \
-        if files else []
+    dets = state.detected(files)
     _slots(dets)
     c1, c2, _ = st.columns([1.3, 1.3, 3])
     c1.download_button("Data request template (HTML)", request_html(), "data_request.html", "text/html",
