@@ -30,7 +30,9 @@ interactive HTML report.
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision
   - `checks.py` issue record, `ISSUE_TEXT` (title / plain meaning / design impact per code), accepting blocks, gaps
   - `detect.py` per file / sheet: table guess, read-as, row count · `coverage.py` period covered, gaps, peak flag
-  - `pipeline.py` ingest_table / ingest_sources / ingest_folder / write_outputs
+  - `pipeline.py` ingest_table / ingest_sources / ingest_folder / write_outputs; `apply_acceptances` (accepting
+    only relabels blocks, so the workbench applies it to a cached run) and `table_inputs` (what one table depends
+    on: the workbench re-reads a table only when its own inputs change, e.g. units re-read just the item master)
   - `exports.py` rejects for the client, accepted blocks · `receipt.py` data receipt (HTML) ·
     `request_template.py` data request (HTML / Excel) from the schema
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)

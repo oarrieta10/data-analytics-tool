@@ -25,7 +25,8 @@ import streamlit as st
 import yaml
 
 from gtpfit.app import ROOT
-from gtpfit.ingest import IngestParams, Source, ingest_sources, load_wms_profile, parse_wms_profile, save_wms_profile
+from gtpfit.ingest import (IngestParams, Source, ingest_sources, ingest_table, load_wms_profile, parse_wms_profile,
+                           save_wms_profile, table_inputs)
 from gtpfit.ingest.mapping import WmsProfile
 from gtpfit.ingest.detect import detect
 from gtpfit.ingest.params import DEFAULT_ASSORTMENT, assortment_bands, block_fields, meta
@@ -331,16 +332,40 @@ def params_json() -> str:
 # ---- running ingest ------------------------------------------------------------------------------
 
 def run_spec(assign: dict, profile: str | None) -> dict:
+    """What a run reads with.  Acceptances are not part of it: they only relabel blocks (apply_acceptances)."""
     return dict(assign=sorted((t, str(s.path), s.part) for t, srcs in assign.items() for s in srcs),
-                profile=profile, params=params(), accept=ss().get("ing::accept", {}))
+                profile=profile, params=params())
 
 
 def run_key(spec: dict, files) -> str:
     return json.dumps(spec, sort_keys=True, default=str) + signature(files)
 
 
+TABLE_RUNS = 12  # cached per-table results kept in the session (a few variants of each of four tables)
+
+
+def table_key(sources, table: str, profile, params: IngestParams) -> str:
+    """Changes only when something this table's ingest depends on changes (see pipeline.table_inputs)."""
+    return json.dumps([table, [(str(s.path), s.part) for s in sources], signature(sorted({s.path for s in sources})),
+                       table_inputs(table, profile, params)], sort_keys=True, default=str)
+
+
+def _cached_table(sources, table, profile, params, accept):
+    """ingest_table, reused while the table's own inputs are unchanged (e.g. a unit decision re-reads only the
+    item master).  Run without acceptances: they are applied to the whole result afterwards."""
+    cache = ss().setdefault("ing::table_runs", {})
+    srcs = [s if isinstance(s, Source) else Source(Path(s), None) for s in sources]
+    key = table_key(srcs, table, profile, params)
+    if key not in cache:
+        if len(cache) >= TABLE_RUNS:
+            cache.pop(next(iter(cache)))
+        cache[key] = ingest_table(srcs, table, profile, params)
+    return cache[key]
+
+
 def run_ingest(spec: dict, files, expected_rows: dict | None = None):
-    """Ingest with a progress bar; results are kept per run key so going back and forth is instant."""
+    """Ingest with a progress bar, without acceptances (apply them with apply_acceptances).  Whole runs are
+    kept per run key so going back and forth is instant; tables whose inputs did not change are not re-read."""
     key = run_key(spec, files)
     runs = ss().setdefault("ing::runs", {})
     if key in runs:
@@ -349,19 +374,24 @@ def run_ingest(spec: dict, files, expected_rows: dict | None = None):
     for table, path, part in spec["assign"]:
         assign.setdefault(table, []).append(Source(Path(path), part))
     profile = parse_wms_profile(yaml.safe_load(spec["profile"]) or {}) if spec["profile"] else None
+    p = IngestParams(**params_from_json(json.dumps(spec["params"])))  # tuples back from any lists
+    cache = ss().setdefault("ing::table_runs", {})
     bar = st.progress(0.0, text="Starting ingest…")
 
     def tick(e):
         label = TABLE_LABEL.get(e["table"], e["table"])
         n = (expected_rows or {}).get(e["table"])
         if e["stage"] == "start":
-            bar.progress(e["index"] / e["total"], text=f"Reading {label}" + (f": {n:,} rows…" if n else "…"))
+            if table_key(assign[e["table"]], e["table"], profile, p) in cache:
+                text = f"{label}: unchanged, reusing it…"
+            else:
+                text = f"Reading {label}" + (f": {n:,} rows…" if n else "…")
+            bar.progress(e["index"] / e["total"], text=text)
         else:
             bar.progress((e["index"] + 1) / e["total"], text=f"{label}: {e['rows'] or 0:,} rows kept")
 
-    p = IngestParams(**params_from_json(json.dumps(spec["params"])))  # tuples back from any lists
-    r = ingest_sources(assign, profile=profile, params=p, accept=spec["accept"],
-                       strict=False, where="the confirmed files", on_progress=tick)
+    r = ingest_sources(assign, profile=profile, params=p, strict=False, where="the confirmed files",
+                       on_progress=tick, run_table=_cached_table)
     bar.empty()
     if len(runs) >= 3:
         runs.pop(next(iter(runs)))
@@ -371,5 +401,5 @@ def run_ingest(spec: dict, files, expected_rows: dict | None = None):
 
 def reset() -> None:
     """Start another client: forget the run and the choices (the client's files were never copied)."""
-    for k in [k for k in ss().keys() if str(k).startswith(("ing::", "srcs::", "map::", "thr::", "cs::", "acc"))]:
+    for k in [k for k in ss().keys() if str(k).startswith(("ing::", "srcs::", "map::", "thr::", "cs::", "ds::", "acc"))]:
         del ss()[k]

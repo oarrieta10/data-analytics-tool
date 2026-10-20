@@ -380,3 +380,39 @@ def test_peak_hint_threshold_is_a_param():
     data = _dates("2025-01-01", "2025-12-31", lambda d: 5 if d.month == 7 else 4)  # July at 1.25x
     assert busiest_months(data, (), IngestParams().peak_hint_ratio).months == ()
     assert busiest_months(data, (), 1.2).months == (7,)
+
+
+# ---- re-running cheaply: acceptances after the run, per-table inputs ----------------------------------------
+
+def test_apply_acceptances_matches_accepting_during_the_run(tmp_path):
+    from gtpfit.ingest import apply_acceptances
+    o = _raw("orders")
+    o["_d"] = pd.to_datetime(o["Order Date"], format="%m/%d/%Y")
+    folder = _clone(tmp_path / "c", orders=o.sort_values("_d", kind="stable").head(6000).drop(columns="_d"))
+    params = IngestParams(excel_row_limits=(6000,))
+    raw = ingest_folder(folder, profile=load_wms_profile(WMS), params=params, strict=False)
+    key = "orders:excel_row_limit"
+    assert raw.blocked
+    accept = {key: "client confirmed the extract"}
+    after = apply_acceptances(raw, accept)
+    during = ingest_folder(folder, profile=load_wms_profile(WMS), params=params, accept=accept, strict=False)
+    cols = ["table", "code", "severity", "message"]
+    assert after.issues[cols].equals(during.issues[cols])
+    assert not after.blocked and [a["reason"] for a in after.accepted] == ["client confirmed the extract"]
+    assert raw.blocked  # the cached run itself is left as it was
+    undone = apply_acceptances(after, {})
+    assert undone.blocked and undone.issues[cols].equals(raw.issues[cols])
+
+
+def test_table_inputs_units_only_reach_the_item_master():
+    from gtpfit.ingest import table_inputs
+    from gtpfit.ingest.mapping import WmsProfile
+    a = WmsProfile(name="x", units={"length": "in", "weight": "lb"})
+    b = WmsProfile(name="x", units={"length": "cm", "weight": "kg"})
+    assert table_inputs("item_master", a) != table_inputs("item_master", b)
+    for t in ("orders", "receipts", "inventory"):
+        assert table_inputs(t, a) == table_inputs(t, b)
+    # thresholds only the coverage step reads leave every table's inputs alone; one ingest_table reads does not
+    p = IngestParams()
+    assert table_inputs("orders", a, p) == table_inputs("orders", a, IngestParams(peak_months=(6,)))
+    assert table_inputs("orders", a, p) != table_inputs("orders", a, IngestParams(max_gap_days_orders=9))

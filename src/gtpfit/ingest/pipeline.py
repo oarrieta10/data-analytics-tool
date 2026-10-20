@@ -2,13 +2,16 @@
 
     ingest_table(sources, table, profile=None, params=None, accept=()) -> TableResult
     ingest_sources({table: [Source]}, profile=None, params=None, accept=None, strict=True,
-                   on_progress=None) -> IngestResult
+                   on_progress=None, run_table=None) -> IngestResult
+    apply_acceptances(result, accept) -> IngestResult   relabel blocks for new acceptances, nothing re-read
+    table_inputs(table, profile, params) -> dict        what one table depends on besides its files
     ingest_folder(folder, profile=None, params=None, accept=None, strict=True) -> IngestResult
     write_outputs(result, out_dir, client=None, detections=None, requested=None, folder=None) -> Path
 
 accept: {"table:code" or "code": reason} (or {key: {"reason", "at"}}); a block is
 only accepted with a reason, and the reason travels to accepted_blocks.csv and
-the data receipt.
+the data receipt.  Accepting only relabels a block: it never changes what is read
+or kept, so apply_acceptances can change the acceptances of a finished run.
 
 Canonical columns and units are in schema.py (inches, pounds, dates, seconds).
 Rows that cannot be used (zero/negative quantity, blank or unreadable key or
@@ -21,14 +24,15 @@ the wrong unit, duplicate SKUs, orphans) — that is quality/.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
 from . import coerce
-from .checks import (Issue, accepted_for, fmt_day, issues_frame, missing_day_runs, normalise_accept,
-                     snapshot_gaps)
+from .checks import (SEVERITY_ORDER, Issue, accepted_for, fmt_day, issues_frame, missing_day_runs,
+                     normalise_accept, snapshot_gaps)
 from .coverage import Coverage, coverage as order_coverage
 from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile, suggest_mapping
 from .params import IngestParams
@@ -431,18 +435,50 @@ def discover(paths, profile=None, params=None, add=None) -> dict:
     return found
 
 
+# Thresholds ingest_table never reads (coverage runs on the finished orders; the others are the workbench's).
+RUN_LEVEL_PARAMS = ("peak_months", "min_coverage_days", "peak_hint_ratio", "mapping_reuse_min_overlap")
+
+
+def table_inputs(table: str, profile: WmsProfile | None, params: IngestParams | None = None) -> dict:
+    """What ingest_table(table) depends on besides its files: the profile's parts for this table (units only
+    matter to the item master, the only table with sizes and weights) and the thresholds it reads.  A unit
+    decision or a new peak month therefore leaves the other tables as they were."""
+    prof = profile or WmsProfile(name="")  # no profile = an empty one, so adding units changes nothing else
+    d = dict(columns=prof.columns.get(table), sheet=prof.sheets.get(table), date_format=prof.date_format)
+    if table == "item_master":
+        d["units"] = dict(prof.units)
+    if params is not None:
+        d["params"] = {k: v for k, v in dataclasses.asdict(params).items() if k not in RUN_LEVEL_PARAMS}
+    return d
+
+
+def apply_acceptances(result: IngestResult, accept) -> IngestResult:
+    """The same run with these acceptances: a block covered by one becomes "accepted", an accepted block no
+    longer covered goes back to "block".  Nothing is re-read (acceptance never changes the data)."""
+    acc = normalise_accept(accept)
+    iss = result.issues.copy()
+    is_block = iss["severity"].isin(["block", "accepted"])
+    iss.loc[is_block, "severity"] = ["accepted" if accepted_for(acc, t, c) else "block"
+                                     for t, c in zip(iss.loc[is_block, "table"], iss.loc[is_block, "code"])]
+    iss = iss.sort_values("severity", key=lambda s: s.map(SEVERITY_ORDER), kind="stable").reset_index(drop=True)
+    return dataclasses.replace(result, issues=iss, acceptances=acc)
+
+
 def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: IngestParams | None = None,
                    accept=None, strict: bool = True, _issues=None, where: str = "the inputs",
-                   on_progress=None) -> IngestResult:
+                   on_progress=None, run_table=None) -> IngestResult:
     """Ingest confirmed sources: {table: [Source or path]}.  Missing tables are reported like a folder run.
 
     on_progress(event) is called before and after each table with
     {"table", "index", "total", "stage": "start" | "done", "rows"}.
+    run_table: called in place of ingest_table, with the same arguments (e.g. to reuse an unchanged
+    table's result; key it on the sources and table_inputs(table, profile, params)).
     """
     params = params or IngestParams()
     acc = normalise_accept(accept)
     issues: list[Issue] = list(_issues or [])
     progress = on_progress or (lambda e: None)
+    run_table = run_table or ingest_table
 
     def add(table, code, severity, message, count=None, share=None):
         if severity == "block" and accepted_for(acc, table, code):
@@ -456,7 +492,7 @@ def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: Inge
                 f"No {table} file found in {where}.")
             continue
         progress(dict(table=table, index=i, total=len(TABLES), stage="start", rows=None))
-        r = ingest_table(assign[table], table, profile, params, acc)
+        r = run_table(assign[table], table, profile, params, acc)
         progress(dict(table=table, index=i, total=len(TABLES), stage="done",
                       rows=None if r.table is None else len(r.table)))
         issues += r.issues

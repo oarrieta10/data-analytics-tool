@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from gtpfit.ingest import Source
+from gtpfit.ingest import Source, apply_acceptances
 from gtpfit.ingest.exports import client_rejects
 from gtpfit.ingest.receipt import data_receipt
 
@@ -17,10 +17,11 @@ from . import state, widgets
 
 
 def current_result():
-    """Run (or reuse) ingest for the confirmed files, profile, thresholds and accepted blocks."""
+    """Run (or reuse) ingest for the confirmed files, profile and thresholds, then apply the accepted blocks."""
     assign = {t: [Source(Path(p), part) for p, part in srcs] for t, srcs in st.session_state["ing::assign"].items()}
     spec = state.run_spec(assign, state.run_profile_text(st.session_state.get("ing::overrides")))
-    return state.run_ingest(spec, state.input_files(), st.session_state.get("ing::expected")), spec
+    raw = state.run_ingest(spec, state.input_files(), st.session_state.get("ing::expected"))
+    return apply_acceptances(raw, st.session_state.get("ing::accept", {})), spec  # accepting re-reads nothing
 
 
 def show() -> None:

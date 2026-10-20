@@ -482,3 +482,51 @@ def test_line_definition_recorded_in_receipt(tmp_path, monkeypatch):
     at = _next(_next(at, "ing::run"), "ing::to4")
     receipt = (_ws(tmp_path) / "_ingest" / "data_receipt.html").read_text(encoding="utf-8")
     assert "Order line definition:</b> order_sku" in receipt
+
+
+# ---- Review re-reads only what changed ------------------------------------------------------------------
+
+@pytest.fixture
+def reads(monkeypatch):
+    """File names ingest reads data from, in order (headers aren't counted)."""
+    from gtpfit.ingest import pipeline
+    seen, real = [], pipeline.read_raw
+
+    def counting(src, *a, **k):
+        seen.append(Path(str(getattr(src, "path", src))).name)
+        return real(src, *a, **k)
+    monkeypatch.setattr(pipeline, "read_raw", counting)
+    return seen
+
+
+def test_unit_decision_rereads_only_the_item_master(tmp_path, monkeypatch, learned, reads):
+    im = pd.read_csv(SAMPLE / "item_master.csv", dtype={"Item Number": str})
+    dims = ["Unit Length", "Unit Width", "Unit Height", "Case Length", "Case Width", "Case Height"]
+    im[dims] = (im[dims] * 2.54).round(2)
+    im[["Unit Weight", "Case Weight"]] = (im[["Unit Weight", "Case Weight"]] / 2.20462262185).round(3)
+    at = _next(_app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client", item_master=im)), "ing::run")
+    assert sorted(reads) == sorted(FILES)  # the first run reads every file once
+    key = "item_master:unit_ambiguous"
+    pick = at.selectbox(key=f"unitpick::{key}")
+    pick.select(next(o for o in pick.options if o.startswith("cm / kg"))).run()
+    reads.clear()
+    at = _next(at, f"unituse::{key}")
+    assert reads == ["item_master.csv"]
+    assert not [e for e in at.error if "BLOCKED" in e.value]
+
+
+def test_accepting_a_block_rereads_nothing(tmp_path, monkeypatch, reads):
+    o = pd.read_csv(SAMPLE / "orders.csv", dtype=str)
+    o["_d"] = pd.to_datetime(o["Order Date"], format="%m/%d/%Y")
+    clipped = o.sort_values("_d", kind="stable").head(6000).drop(columns="_d")
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client", orders=clipped),
+              **{"ds::excel_row_limits": "6000"})
+    at = _next(at, "ing::run")
+    key = "orders:excel_row_limit"
+    reads.clear()
+    at.text_input(key=f"accwhy::{key}").input("Client confirmed the export ends there").run()
+    at = _next(at, f"accok::{key}")
+    assert not [e for e in at.error if "BLOCKED" in e.value]
+    at = _next(at, f"accundo::{key}")
+    assert any("BLOCKED" in e.value for e in at.error)
+    assert reads == []
