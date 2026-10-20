@@ -236,3 +236,32 @@ def test_ingest_sources_matches_folder(ds):
     for t in FILES:
         pd.testing.assert_frame_equal(a.tables[t], b.tables[t])
     assert list(a.issues["code"]) == list(b.issues["code"])
+
+
+@pytest.mark.parametrize("fmt", ["csv", "xlsx", "json", "parquet", "sqlite"])
+def test_read_limit_previews_first_rows(ds, tmp_path, fmt):
+    from gtpfit.ingest.readers import read
+    raw = _raw(ds, "orders")
+    if fmt == "csv":
+        src = Source(ds / "orders.csv")
+    elif fmt == "xlsx":
+        p = tmp_path / "o.xlsx"
+        _workbook(ds, p)
+        src = Source(p, "Orders")
+    elif fmt == "json":
+        p = tmp_path / "o.json"
+        p.write_text(raw.to_json(orient="records"), encoding="utf-8")
+        src = Source(p)
+    elif fmt == "parquet":
+        p = tmp_path / "o.parquet"
+        duckdb.sql(f"copy (select * from read_csv('{(ds / 'orders.csv').as_posix()}', header=true)) "
+                   f"to '{p.as_posix()}' (format parquet)")
+        src = Source(p)
+    else:
+        p = tmp_path / "o.sqlite"
+        with sqlite3.connect(p) as con:
+            _typed(ds, "orders").to_sql("O", con, index=False)
+        src = Source(p, "O")
+    df, meta = read(src, columns=["Order Nbr", "Item Number"], limit=5)
+    assert len(df) == 5 and list(df.columns) == ["Order Nbr", "Item Number"]
+    assert list(df["Order Nbr"]) == list(raw["Order Nbr"].head(5))

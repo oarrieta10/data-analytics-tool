@@ -19,9 +19,10 @@ import yaml
 from gtpfit.app import ROOT
 from gtpfit.ingest import (IngestParams, Source, ingest_sources, parse_wms_profile, profile_from_result,
                            save_wms_profile, write_outputs)
+from gtpfit.ingest import suggest_mapping
 from gtpfit.ingest.classify import classify, list_sources
-from gtpfit.ingest.readers import SUPPORTED
-from gtpfit.ingest.schema import TABLES
+from gtpfit.ingest.readers import SUPPORTED, headers as source_headers, read as read_source
+from gtpfit.ingest.schema import FIELD_HELP, TABLES
 from gtpfit.lines import LINE_DEFINITIONS, order_profile
 
 SEV_LABEL = {"block": "⛔ block", "accepted": "✅ accepted", "warn": "⚠️ warn", "info": "ℹ️ info"}
@@ -129,6 +130,91 @@ def _sources_table(rows: list, sig: str) -> dict:
         if table:
             assign.setdefault(table, []).append(Source(Path(rows[i]["path"]), rows[i]["part"]))
     return assign
+
+
+# ---- column mapping: guess, then confirm --------------------------------------------------
+
+NOT_IN_FILE = "(not in file)"
+EXAMPLES = 3          # distinct example values shown beside each column
+PREVIEW_ROWS = 200    # rows read to find them
+
+
+def default_mapping(table: str, headers: list, profile_columns: dict | None) -> dict:
+    """The starting mapping: the WMS profile's columns for this table if it has them, else automatic matching."""
+    if profile_columns:
+        return {f: h for f, h in profile_columns.items() if h in headers}
+    return dict(suggest_mapping(headers, table).mapping)
+
+
+def effective_profile_text(profile_text: str | None, overrides: dict) -> str | None:
+    """The WMS profile with the consultant's column choices for the tables they changed."""
+    if not overrides:
+        return profile_text
+    base = (yaml.safe_load(profile_text) if profile_text else None) or {"name": "workbench"}
+    cols = dict(base.get("columns") or {})
+    cols.update(overrides)
+    base["columns"] = cols
+    return yaml.safe_dump(base, sort_keys=False, allow_unicode=True)
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _preview(sig: str, path: str, part) -> tuple:
+    """Column names and a few distinct example values per column (first PREVIEW_ROWS rows)."""
+    src = Source(Path(path), part)
+    hdr = source_headers(src)
+    df, _ = read_source(src, limit=PREVIEW_ROWS)
+    ex = {}
+    for c in dict.fromkeys(df.columns):
+        col = df[c].iloc[:, 0] if isinstance(df[c], pd.DataFrame) else df[c]  # duplicate names: first one
+        vals = [str(v) for v in col.dropna().drop_duplicates().head(EXAMPLES)]
+        ex[c] = ", ".join(v if len(v) <= 24 else v[:23] + "…" for v in vals)
+    return hdr, ex
+
+
+def _columns_editor(assign: dict, profile_text: str | None, sig: str) -> dict:
+    """One editable table per assigned table: each field and the column it comes from.  Returns changed tables."""
+    prof_cols = ((yaml.safe_load(profile_text) or {}).get("columns") or {}) if profile_text else {}
+    tables = [t for t in TABLES if assign.get(t)]
+    st.subheader("Which column is which?")
+    st.caption("Matched from the column names. Pick a different **Column** where the match is wrong or missing; "
+               "the example values help tell similar columns apart (e.g. created vs received dates).")
+    overrides = {}
+    for t, tab in zip(tables, st.tabs([USE_AS[t] for t in tables])):
+        with tab:
+            src = assign[t][0]
+            hdr, ex = _preview(sig, str(src.path), src.part)
+            default = default_mapping(t, hdr, prof_cols.get(t))
+            label = {h: f"{h} · {ex[h]}" if ex.get(h) else h for h in dict.fromkeys(hdr) if h}
+            to_header = {v: k for k, v in label.items()}
+            flds = TABLES[t]
+            view = pd.DataFrame({
+                "Field": [f.name for f in flds],
+                "Required": ["yes" if f.required else "" for f in flds],
+                "What it is": [FIELD_HELP[t].get(f.name, "") for f in flds],
+                "Column": [label.get(default.get(f.name), NOT_IN_FILE) for f in flds],
+            })
+            ph = abs(hash(profile_text or "")) % 10**8
+            edited = st.data_editor(
+                view, hide_index=True, width="stretch", key=f"cols::{t}::{sig}::{ph}",
+                disabled=["Field", "Required", "What it is"],
+                column_config={
+                    "Column": st.column_config.SelectboxColumn(
+                        options=[NOT_IN_FILE] + list(label.values()), required=True, width="large",
+                        help="The file's column for this field, with example values."),
+                    "What it is": st.column_config.TextColumn(width="medium")})
+            chosen = {f: to_header[c] for f, c in zip(edited["Field"], edited["Column"]) if c != NOT_IN_FILE}
+            missing = [f.name for f in flds if f.required and f.name not in chosen]
+            if missing:
+                st.warning(f"Required, but no column chosen: {', '.join(missing)}. Pick one, or ingest will refuse "
+                           "this table.", icon="⚠️")
+            if len(assign[t]) > 1:
+                st.caption(f"Columns read from {src}; the other {len(assign[t]) - 1} file(s) for this table must "
+                           "have the same columns.")
+            if chosen != default:
+                overrides[t] = chosen
+                changed = sorted(k for k in set(chosen) | set(default) if chosen.get(k) != default.get(k))
+                st.caption(f"Changed from the automatic match: {', '.join(changed)}.")
+    return overrides
 
 
 def _params_from_json(s: str) -> dict:
@@ -283,6 +369,9 @@ def page():
         st.warning("None of these files could be read as data.")
         return
     assign = _sources_table(rows, sig)
+    if assign:
+        overrides = _columns_editor(assign, profile_text, sig)
+        profile_text = effective_profile_text(profile_text, overrides)
     assign_key = tuple(sorted((t, str(s.path), s.part, s.path.stat().st_mtime_ns)
                               for t, srcs in assign.items() for s in srcs))
     confirmed = st.session_state.setdefault("ingest_confirmed", set())

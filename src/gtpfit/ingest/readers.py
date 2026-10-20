@@ -3,7 +3,7 @@
     detect_format(path) -> format name            Source(path, part=None)
     parts(path) -> [sheet / table / zip member] or None
     headers(source) -> column names (stripped)
-    read(source, columns=None) -> (DataFrame, meta)
+    read(source, columns=None, limit=None) -> (DataFrame, meta)
 
 Every reader returns the same kind of DataFrame: text columns trimmed with
 blanks as NA, numbers and dates kept native where the format stores them
@@ -246,15 +246,16 @@ class _Delimited:
     def headers(self, path, part):
         return _text_head(path, _encoding(path))[0]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         enc = _encoding(path)
         _, delim = _text_head(path, enc)
         if enc == "utf-8":
             import duckdb
             rel = duckdb.read_csv(str(path), header=True, all_varchar=True, sep=delim)
-            return rel.select(*[_q(rel.columns[i]) for i in keep]).df(), enc
+            rel = rel.select(*[_q(rel.columns[i]) for i in keep])
+            return (rel.limit(limit) if limit else rel).df(), enc
         return pd.read_csv(path, dtype=str, encoding=enc, sep=delim, keep_default_na=False, na_values=[""],
-                           usecols=keep), enc
+                           usecols=keep, nrows=limit), enc
 
 
 # ---- Excel -------------------------------------------------------------------------------
@@ -334,18 +335,20 @@ class _Excel:
     def headers(self, path, part):
         return self._top(path, part)[1]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         h, hdr = self._top(path, part)
         try:
             data = []
             for j, row in enumerate(_calamine_sheet(path, part).iter_rows()):
                 if j > h:
                     data.append([row[i] if i < len(row) else None for i in keep])
+                    if limit and len(data) >= limit:
+                        break
             df = pd.DataFrame(data, columns=keep, dtype=object)
         except Exception:
             sheet = part if part is not None else 0
             df = _excel(lambda eng: pd.read_excel(path, sheet_name=sheet, header=None, skiprows=h + 1, usecols=keep,
-                                                  dtype=object, engine=eng), path)
+                                                  dtype=object, engine=eng, nrows=limit), path)
         return df.apply(lambda s: s.map(_cell_text)), None
 
 
@@ -376,9 +379,10 @@ class _Json:
     def headers(self, path, part):
         return [str(c).strip() for c in self._rel(path).columns]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         rel = self._rel(path)
-        return rel.select(*[_q(rel.columns[i]) for i in keep]).df(), None
+        rel = rel.select(*[_q(rel.columns[i]) for i in keep])
+        return (rel.limit(limit) if limit else rel).df(), None
 
 
 class _Parquet:
@@ -391,10 +395,11 @@ class _Parquet:
         import duckdb
         return [str(c).strip() for c in duckdb.read_parquet(str(path)).columns]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         import duckdb
         rel = duckdb.read_parquet(str(path))
-        return rel.select(*[_q(rel.columns[i]) for i in keep]).df(), None
+        rel = rel.select(*[_q(rel.columns[i]) for i in keep])
+        return (rel.limit(limit) if limit else rel).df(), None
 
 
 class _Arrow:
@@ -415,10 +420,11 @@ class _Arrow:
     def headers(self, path, part):
         return [str(c).strip() for c in self._names(path)]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         import pyarrow.feather as feather
         raw = self._names(path)
-        return feather.read_table(path, columns=[raw[i] for i in keep]).to_pandas(), None
+        t = feather.read_table(path, columns=[raw[i] for i in keep])
+        return (t.slice(0, limit) if limit else t).to_pandas(), None
 
 
 def _tz_database():
@@ -444,11 +450,12 @@ class _Orc:
         import pyarrow.orc as orc
         return [str(c).strip() for c in orc.ORCFile(path).schema.names]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         import pyarrow.orc as orc
         f = orc.ORCFile(path)
         raw = f.schema.names
-        return f.read(columns=[raw[i] for i in keep]).to_pandas(), None
+        t = f.read(columns=[raw[i] for i in keep])
+        return (t.slice(0, limit) if limit else t).to_pandas(), None
 
 
 class _Sqlite:
@@ -474,12 +481,13 @@ class _Sqlite:
         with self._con(path) as con:
             return [r[1].strip() for r in con.execute(f"pragma table_info({_q(self._table(path, part))})")]
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         t = self._table(path, part)
         with self._con(path) as con:
             raw = [r[1] for r in con.execute(f"pragma table_info({_q(t)})")]
             cols = ", ".join(_q(raw[i]) for i in keep)
-            return pd.read_sql_query(f"select {cols} from {_q(t)}", con), None
+            lim = f" limit {int(limit)}" if limit else ""
+            return pd.read_sql_query(f"select {cols} from {_q(t)}{lim}", con), None
 
 
 class _DuckDBFile:
@@ -512,11 +520,12 @@ class _DuckDBFile:
         finally:
             con.close()
 
-    def read(self, path, part, keep):
+    def read(self, path, part, keep, limit=None):
         con = self._con(path)
         try:
             rel = con.table(self._table(path, part))
-            return rel.select(*[_q(rel.columns[i]) for i in keep]).df(), None
+            rel = rel.select(*[_q(rel.columns[i]) for i in keep])
+            return (rel.limit(limit) if limit else rel).df(), None
         finally:
             con.close()
 
@@ -547,14 +556,15 @@ def headers(source) -> list:
     return REGISTRY[detect_format(s.path)].headers(s.path, s.part)
 
 
-def read(source, columns=None) -> tuple[pd.DataFrame, dict]:
+def read(source, columns=None, limit: int | None = None) -> tuple[pd.DataFrame, dict]:
+    """limit: read only the first rows (previews); data_rows then counts those rows only."""
     src = as_source(source)
     s = _resolve(src)
     fmt = detect_format(s.path)
     reader = REGISTRY[fmt]
     hdr = reader.headers(s.path, s.part)
     keep = [i for i, h in enumerate(hdr) if columns is None or h in set(columns)]
-    df, enc = reader.read(s.path, s.part, keep)
+    df, enc = reader.read(s.path, s.part, keep, limit)
     df.columns = [hdr[i] for i in keep]
     df = df.apply(_clean_text).replace("", pd.NA)
     meta = dict(path=str(src.path), source=str(src), format=fmt, encoding=enc, part=src.part, sheet=src.part,

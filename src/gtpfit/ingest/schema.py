@@ -100,6 +100,41 @@ TABLES: dict[str, list[Field]] = {
     ],
 }
 
+# What each field means, for people choosing columns (workbench) and for the report.
+FIELD_HELP = {
+    "item_master": {
+        "sku": "Item / part number: the key that links all tables.",
+        "description": "Item name or description.",
+        "category": "Product category.", "subcategory": "Product sub-category.",
+        "unit_l": "Length of one unit (each).", "unit_w": "Width of one unit.", "unit_h": "Height of one unit.",
+        "unit_weight": "Weight of one unit.",
+        "case_qty": "Units per case (case pack / QPC).",
+        "case_l": "Case length.", "case_w": "Case width.", "case_h": "Case height.", "case_weight": "Case weight.",
+    },
+    "orders": {
+        "order_id": "Order number (customer or sales order).",
+        "order_date": "Date the line was picked or shipped: drives daily volumes and the design day.",
+        "sku": "Item / part number picked.",
+        "qty": "Units picked or shipped on the line (loose units when there is a separate cases column).",
+        "cases": "Full cases picked on the line, if counted apart from loose units.",
+        "pick_secs": "Time of day the line was picked: drives the hourly profile.",
+        "channel": "Order type, e.g. e-commerce vs store / retail / B2B.",
+    },
+    "receipts": {
+        "receipt_id": "Receipt, ASN or inbound shipment / container number.",
+        "po": "Purchase order number.",
+        "receipt_date": "Date the goods were received.",
+        "sku": "Item / part number received.",
+        "qty": "Units received.",
+    },
+    "inventory": {
+        "snapshot_date": "Date of the stock count / snapshot.",
+        "sku": "Item / part number.",
+        "location": "Storage location.",
+        "on_hand": "Units on hand.",
+    },
+}
+
 # Tables a study cannot run without; the others only warn when absent.
 REQUIRED_TABLES = ("item_master", "orders")
 

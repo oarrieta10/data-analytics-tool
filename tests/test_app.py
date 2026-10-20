@@ -103,3 +103,66 @@ def test_ingest_page_guesses_and_ingests(tmp_path, monkeypatch):
     at.button(key="ing::go").click().run()
     assert not at.exception, at.exception
     assert any("Ready" in s.value for s in at.success), [e.value for e in at.error]
+
+
+# ---- column mapping editor --------------------------------------------------------------
+
+def test_default_mapping_prefers_profile_columns():
+    from gtpfit.app.ingest_page import default_mapping
+    hdr = ["Item Number", "Qty Received", "createdat", "updatedat"]
+    auto = default_mapping("receipts", hdr, None)
+    assert auto["sku"] == "Item Number" and "receipt_date" not in auto
+    prof = default_mapping("receipts", hdr, {"sku": "Item Number", "receipt_date": "updatedat", "qty": "gone"})
+    assert prof == {"sku": "Item Number", "receipt_date": "updatedat"}  # columns not in the file are dropped
+
+
+def test_effective_profile_merges_choices():
+    import yaml
+    from gtpfit.app.ingest_page import effective_profile_text
+    assert effective_profile_text("name: x\nunits: {length: in}\n", {}) == "name: x\nunits: {length: in}\n"
+    out = yaml.safe_load(effective_profile_text("name: x\ncolumns:\n  orders: {sku: SKU}\n",
+                                                {"receipts": {"receipt_date": "createdat"}}))
+    assert out["columns"] == {"orders": {"sku": "SKU"}, "receipts": {"receipt_date": "createdat"}}
+    assert yaml.safe_load(effective_profile_text(None, {"orders": {"sku": "A"}}))["columns"]["orders"] == {"sku": "A"}
+
+
+def test_chosen_column_lets_unrecognised_date_through(tmp_path):
+    """A receipts export whose date column is 'createdat': refused until the consultant picks it."""
+    import pandas as pd
+    import yaml
+    from gtpfit.app.ingest_page import effective_profile_text
+    from gtpfit.ingest import ingest_sources, parse_wms_profile, Source
+    from gtpfit.synth import generate, load_profile
+    generate(load_profile(n_skus=150, ecom_orders_per_day=30, b2b_orders_per_day=2, days=20), tmp_path / "g")
+    rec = pd.read_csv(tmp_path / "g" / "receipts.csv", dtype=str)
+    rec = rec.rename(columns={"Receipt Date": "createdat"}).assign(updatedat="2030-01-01")
+    p = tmp_path / "inbound.csv"
+    rec.to_csv(p, index=False)
+    assign = {"receipts": [Source(p)]}
+    before = ingest_sources(assign, strict=False)
+    assert "missing_required_column" in set(before.issues.loc[before.issues.table == "receipts", "code"])
+    cols = {"receipt_id": "Receipt Nbr", "po": "PO Nbr", "receipt_date": "createdat", "sku": "Item Number",
+            "qty": "Qty Received"}
+    prof = parse_wms_profile(yaml.safe_load(effective_profile_text(None, {"receipts": cols})))
+    after = ingest_sources(assign, profile=prof, strict=False)
+    assert len(after.tables["receipts"]) == len(rec)
+    assert not set(after.issues.loc[after.issues.table == "receipts", "severity"]) & {"block"}
+
+
+def test_ingest_page_shows_column_tabs(tmp_path, monkeypatch):
+    import shutil
+    from gtpfit.synth import generate, load_profile
+    generate(load_profile(n_skus=150, ecom_orders_per_day=30, b2b_orders_per_day=2, days=20), tmp_path / "g")
+    client = tmp_path / "ws" / "untitled"
+    client.mkdir(parents=True)
+    for f in ("item_master.csv", "orders.csv", "receipts.csv", "inventory_snapshots.csv"):
+        shutil.copy(tmp_path / "g" / f, client / f)
+    monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_string(INGEST, default_timeout=180).run()
+    assert not at.exception, at.exception
+    assert any("Which column is which" in h.value for h in at.subheader)
+    col_tables = [d.value for d in at.dataframe if "Field" in d.value.columns]
+    assert len(col_tables) == 4
+    orders = next(t for t in col_tables if "order_date" in set(t["Field"])).set_index("Field")
+    assert orders.loc["order_date", "Column"].startswith("Order Date · ")  # with example values
+    assert not [w for w in at.warning if "Required" in w.value]
