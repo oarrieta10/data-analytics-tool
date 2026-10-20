@@ -5,7 +5,10 @@ the operating system's folder dialog (a short-lived subprocess), a pasted path
 or one of the client's recent folders, and read in place: nothing is copied and
 nothing is written into it.  data/workspace/<client>/ keeps _ingest/ outputs,
 the client's remembered mapping (wms_<client>.yaml) and client.yaml (recent
-folders; also how recent clients are listed).
+folders, client settings; also how recent clients are listed).  Client settings
+(peak months, gap and bad-row limits, assortment, SKU case, line definition)
+are saved per client; engine settings (every other IngestParams field) last
+for the session only.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from gtpfit.app import ROOT
 from gtpfit.ingest import IngestParams, Source, ingest_sources, load_wms_profile, parse_wms_profile, save_wms_profile
 from gtpfit.ingest.mapping import WmsProfile
 from gtpfit.ingest.detect import detect
+from gtpfit.ingest.params import ASSORTMENTS, DEFAULT_ASSORTMENT, assortment_bands
 from gtpfit.ingest.schema import TABLE_LABEL
 
 WORKSPACE = Path(os.environ.get("GTPFIT_WORKSPACE", ROOT / "data" / "workspace"))  # env: tests
@@ -150,8 +154,9 @@ def open_folder(path: str) -> str | None:
         return f"Not a folder: {path}"
     ss()["ing::folder_path"] = str(p)
     remember_folder(client(), p)
-    for k in [k for k in ss().keys() if str(k).startswith(("srcs::", "map::"))]:
-        del ss()[k]  # a new folder: fresh guesses and mappings
+    for k in [k for k in ss().keys() if str(k).startswith(("srcs::", "map::", "cs::"))]:
+        del ss()[k]  # a new folder: fresh guesses and mappings, the client's saved settings
+    ss().pop("ing::settings", None)
     go(2)
     return None
 
@@ -247,7 +252,57 @@ def run_profile_text(overrides: dict | None = None) -> str | None:
     return yaml.safe_dump(d, sort_keys=False, allow_unicode=True) if len(d) > 1 else None
 
 
-# ---- thresholds --------------------------------------------------------------------------------
+# ---- settings: client settings (saved per client) over engine settings (this session only) -----------
+
+# IngestParams fields the client settings decide; every other field is an engine setting.
+CLIENT_FIELDS = ("peak_months", "max_bad_row_share", "upper_case_skus", *ASSORTMENTS[DEFAULT_ASSORTMENT])
+
+
+def default_settings() -> dict:
+    p = IngestParams()
+    return dict(peak_months=list(p.peak_months), max_gap_days_orders=int(p.max_gap_days["orders"]),
+                max_bad_row_share=float(p.max_bad_row_share), assortment=DEFAULT_ASSORTMENT,
+                upper_case_skus=bool(p.upper_case_skus), line_definition="row")
+
+
+def client_settings(name: str | None = None) -> dict:
+    """The client's settings: defaults, then what its client.yaml holds (unknown keys ignored)."""
+    name = client() if name is None else name
+    p = client_dir(name) / "client.yaml"
+    saved = ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("settings") or {}) \
+        if name and p.exists() else {}
+    base = default_settings()
+    return {**base, **{k: v for k, v in saved.items() if k in base}}
+
+
+def save_client_settings(settings: dict, name: str | None = None) -> None:
+    """Save only the values that differ from the defaults, so a later change of default still reaches the client."""
+    base = default_settings()
+    write_client_yaml(name or client(), settings={k: v for k, v in settings.items() if k in base and v != base[k]})
+
+
+def settings_params(settings: dict, engine: dict | None = None) -> dict:
+    """IngestParams (as a dict) from the client settings, over any engine-setting overrides."""
+    base = dataclasses.asdict(IngestParams())
+    engine = engine or {}
+    d = {**base, **engine}
+    d["peak_months"] = tuple(sorted(int(m) for m in settings["peak_months"]))
+    d["max_gap_days"] = {**base["max_gap_days"], **(engine.get("max_gap_days") or {}),
+                         "orders": int(settings["max_gap_days_orders"])}
+    d["max_bad_row_share"] = float(settings["max_bad_row_share"])
+    d["upper_case_skus"] = bool(settings["upper_case_skus"])
+    d.update(assortment_bands(settings["assortment"]))
+    return d
+
+
+def settings() -> dict:
+    """This run's client settings: edited on Confirm this session, else the client's saved ones."""
+    return ss().get("ing::settings") or client_settings()
+
+
+def line_definition() -> str:
+    return settings().get("line_definition", "row")
+
 
 def params_from_json(s: str) -> dict:
     d = json.loads(s) if s else {}
@@ -258,7 +313,7 @@ def params_from_json(s: str) -> dict:
 
 
 def params() -> dict:
-    return ss().get("ing::params") or dataclasses.asdict(IngestParams())
+    return settings_params(settings(), ss().get("ing::engine"))
 
 
 def params_json() -> str:
@@ -308,5 +363,5 @@ def run_ingest(spec: dict, files, expected_rows: dict | None = None):
 
 def reset() -> None:
     """Start another client: forget the run and the choices (the client's files were never copied)."""
-    for k in [k for k in ss().keys() if str(k).startswith(("ing::", "srcs::", "map::", "thr::", "acc"))]:
+    for k in [k for k in ss().keys() if str(k).startswith(("ing::", "srcs::", "map::", "thr::", "cs::", "acc"))]:
         del ss()[k]

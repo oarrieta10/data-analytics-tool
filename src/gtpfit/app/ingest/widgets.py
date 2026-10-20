@@ -1,4 +1,4 @@
-"""widgets.py — pieces shared by the Ingest steps: stepper, header, thresholds, verdict, block cards,
+"""widgets.py — pieces shared by the Ingest steps: stepper, header, client settings, verdict, block cards,
 coverage strip and the detail tabs.  Issue wording comes from gtpfit.ingest.checks.ISSUE_TEXT."""
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import streamlit as st
 from gtpfit.ingest import IngestParams
 from gtpfit.ingest.checks import explain
 from gtpfit.ingest.coverage import sparkline_svg
+from gtpfit.ingest.params import ASSORTMENTS
 from gtpfit.ingest.schema import FIELD_LABEL, TABLE_LABEL, TABLES
 from gtpfit.lines import LINE_DEFINITIONS, order_profile
 
@@ -51,28 +52,81 @@ def header(editable: bool) -> None:
     c3.markdown("🔒 **Data stays on this computer**")
 
 
-def thresholds() -> None:
-    """'Advanced thresholds': every IngestParams field, collapsed, with how many differ and a Reset."""
-    base = dataclasses.asdict(IngestParams())
-    cur = dict(state.params())
-    changed = [k for k in base if json_eq(cur.get(k), base[k]) is False]
-    with st.expander(f"Advanced thresholds ({len(changed)} changed)" if changed else "Advanced thresholds"):
-        if st.button("Reset to defaults", key="thr::reset", disabled=not changed):
-            for k in [k for k in st.session_state.keys() if str(k).startswith("thr::") and k != "thr::reset"]:
-                del st.session_state[k]
-            st.session_state["ing::params"] = base
-            st.rerun()
+def _bands_text(name: str) -> str:
+    b = ASSORTMENTS[name]
+    u, c, d = b["unit_longest_side_in"], b["case_longest_side_in"], b["density_lb_ft3"]
+    return f"unit {u[0]:g}–{u[1]:g} in, case {c[0]:g}–{c[1]:g} in, {d[0]:g}–{d[1]:g} lb/ft³"
+
+
+def client_settings() -> None:
+    """'Client settings' on Confirm: the few choices that differ by client, saved to its client.yaml, plus a
+    collapsed 'Engine settings' with every other IngestParams field (this session only).  Shows how many
+    values differ from the defaults, with a Reset."""
+    base, saved = state.default_settings(), state.client_settings()
+    cur = st.session_state.get("ing::settings") or saved
+    with st.container(border=True):
+        top = st.container()
         new = {}
+        a, b = st.columns(2)
+        with a:
+            new["peak_months"] = sorted(st.multiselect(
+                "Peak months", list(range(1, 13)), default=list(cur["peak_months"]), key="cs::peak_months",
+                format_func=lambda m: calendar.month_name[m]))
+            st.caption("Orders must include these months, or the design day misses the busiest season.")
+            new["max_gap_days_orders"] = int(st.number_input(
+                "Longest tolerated gap in orders (days)", min_value=0, value=int(cur["max_gap_days_orders"]),
+                step=1, key="cs::max_gap_days_orders"))
+            st.caption("A longer run of days with no orders is a missing slice of the extract, not a closure.")
+            pct = st.number_input("Share of unusable rows before a table is refused (%)", min_value=0.0,
+                                  max_value=100.0, value=float(cur["max_bad_row_share"]) * 100, step=0.5,
+                                  format="%.1f", key="cs::max_bad_row_share")
+            new["max_bad_row_share"] = round(pct / 100, 6)
+            st.caption("Above this, too many rows are set aside to trust the volumes.")
+        with b:
+            names = list(ASSORTMENTS)
+            new["assortment"] = st.selectbox("Assortment type", names, index=names.index(cur["assortment"])
+                                             if cur["assortment"] in names else 0, key="cs::assortment")
+            st.caption(f"Sets the ranges used to check units: {_bands_text(new['assortment'])}.")
+            new["upper_case_skus"] = not st.toggle("SKUs are case-sensitive", value=not cur["upper_case_skus"],
+                                                   key="cs::case_sensitive")
+            st.caption("Off: “ab-1” and “AB-1” are one SKU. On: they stay separate SKUs.")
+            defs = list(LINE_DEFINITIONS)
+            new["line_definition"] = st.radio("What counts as an order line", defs,
+                                              index=defs.index(cur["line_definition"]), key="cs::line_definition",
+                                              captions=[LINE_DEFINITIONS[d] for d in defs])
+            st.caption("Agreed with the client; it changes lines per order and pick counts downstream.")
+        engine = _engine_settings()
+        if new != saved:
+            state.save_client_settings(new)
+        st.session_state["ing::settings"] = new
+        n = sum(new[k] != base[k] for k in base) + len(engine)
+        c1, c2 = top.columns([5, 1.3], vertical_alignment="center")
+        c1.markdown("**Client settings**" + (f" · {n} differ from defaults" if n else " · all defaults"))
+        if c2.button("Reset to defaults", key="cs::reset", disabled=not n):
+            for k in [k for k in st.session_state.keys() if str(k).startswith(("cs::", "thr::"))]:
+                del st.session_state[k]
+            st.session_state["ing::settings"], st.session_state["ing::engine"] = base, {}
+            state.save_client_settings(base)
+            st.rerun()
+        top.caption(f"Saved for {state.client()} and used every time.")
+
+
+def _engine_settings() -> dict:
+    """Every IngestParams field the client settings don't cover, collapsed; returns only the changed ones."""
+    base = dataclasses.asdict(IngestParams())
+    cur = {**base, **(st.session_state.get("ing::engine") or {})}
+    new = {}
+    with st.expander("Engine settings (rarely needed)"):
+        st.caption("This session only. Each default and its source is in gtpfit/ingest/params.py.")
         for name, v in base.items():
+            if name in state.CLIENT_FIELDS:
+                continue
             label = name.replace("_", " ")
             key = f"thr::{name}"
             val = cur.get(name, v)
-            if name == "peak_months":
-                months = st.multiselect(label, list(range(1, 13)), default=list(val), key=key,
-                                        format_func=lambda m: calendar.month_name[m],
-                                        help="Months holding the client's peak season; orders must cover them.")
-                new[name] = tuple(sorted(months))
-            elif name == "excel_row_limits":
+            if name == "max_gap_days":  # the orders gap is a client setting
+                v = {k: x for k, x in v.items() if k != "orders"}
+            if name == "excel_row_limits":
                 txt = st.text_input(label, ", ".join(str(x) for x in val), key=key,
                                     help="Row counts that mean a clipped export.")
                 new[name] = tuple(int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit())
@@ -91,7 +145,11 @@ def thresholds() -> None:
                              float(b.number_input(f"{label}: high", value=float(val[1]), key=f"{key}::hi")))
             else:
                 new[name] = val
-        st.session_state["ing::params"] = new
+    if "max_gap_days" in new:
+        new["max_gap_days"] = {**base["max_gap_days"], **new["max_gap_days"]}
+    changed = {k: x for k, x in new.items() if not json_eq(x, base[k])}
+    st.session_state["ing::engine"] = changed
+    return changed
 
 
 def json_eq(a, b) -> bool:
@@ -239,7 +297,8 @@ def details(result, key: str) -> None:
             st.caption(f"{len(df):,} rows. First 1,000 shown.")
             st.dataframe(df.head(1000), width="stretch", hide_index=True)
     with t_lines:
-        st.markdown("What counts as an order line is **agreed with the client**; both definitions are shown.")
+        st.markdown(f"What counts as an order line is **agreed with the client**: **{state.line_definition()}** "
+                    "(set on Confirm). Both definitions are shown.")
         if "orders" in result.tables:
             prof = _line_profiles(key, result.tables["orders"])
             st.dataframe(prof[["channel", "definition", "orders", "lines", "lines_per_order", "units_per_line",

@@ -16,7 +16,7 @@ def show() -> None:
     if "ing::out" not in st.session_state:
         out = write_outputs(final["result"], state.output_dir(), client=state.client(),
                             detections=final["detections"], requested=final["requested"],
-                            folder=state.input_folder())
+                            folder=state.input_folder(), line_definition=state.line_definition())
         used = profile_from_result(final["result"], state.client())  # the units and date format ingest used
         state.save_client_profile(units=used.units, date_format=used.date_format)
         state.write_client_yaml(state.client(), last_ingest=str(out), last_folder=str(state.input_folder()))

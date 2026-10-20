@@ -84,7 +84,7 @@ def test_choose_folder_screen(tmp_path, monkeypatch):
     for table in ("Item master", "Order history", "Receipts (inbound)", "Inventory snapshots"):
         assert table in text
     assert "Data stays on this computer" in text
-    assert any(e.label.startswith("Advanced thresholds") for e in at.expander)
+    assert not [e for e in at.expander if "thresholds" in e.label.lower()]  # settings live on Confirm now
 
 
 def test_opening_a_folder_shows_summary_and_goes_to_confirm(tmp_path, monkeypatch):
@@ -337,3 +337,99 @@ def test_remember_synonym_teaches_automatic_matching(tmp_path, monkeypatch, lear
     at = _app(tmp_path, monkeypatch, folder=folder, client="Beta")
     assert not [m for m in at.markdown if "SKU / item number is required" in m.value]
     assert not at.button(key="ing::run").disabled
+
+
+# ---- client settings on Confirm ------------------------------------------------------------------------
+
+def test_assortment_presets_set_the_three_bands():
+    import dataclasses
+    from gtpfit.app.ingest.state import default_settings, settings_params
+    from gtpfit.ingest import IngestParams
+    from gtpfit.ingest.params import ASSORTMENTS, DEFAULT_ASSORTMENT, assortment_bands
+    bands = ("unit_longest_side_in", "case_longest_side_in", "density_lb_ft3")
+    assert set(ASSORTMENTS) == {"consumer goods", "industrial", "grocery"}
+    d = dataclasses.asdict(IngestParams())
+    assert {k: d[k] for k in bands} == ASSORTMENTS[DEFAULT_ASSORTMENT]  # the defaults are the consumer preset
+    for name, preset in ASSORTMENTS.items():
+        assert set(preset) == set(bands)
+        p = settings_params({**default_settings(), "assortment": name})
+        assert {k: p[k] for k in bands} == preset
+        IngestParams(**p)  # a valid parameter set
+    assert ASSORTMENTS["industrial"]["density_lb_ft3"][1] > ASSORTMENTS["consumer goods"]["density_lb_ft3"][1]
+    with pytest.raises(ValueError):
+        assortment_bands("furniture")
+
+
+def test_settings_map_onto_params():
+    from gtpfit.app.ingest.state import default_settings, settings_params
+    s = {**default_settings(), "peak_months": [8, 9], "max_gap_days_orders": 7, "max_bad_row_share": 0.05,
+         "upper_case_skus": False}
+    p = settings_params(s, engine={"max_gap_days": {"receipts": 10}, "fuzzy_header_cutoff": 0.9})
+    assert p["peak_months"] == (8, 9) and p["max_gap_days"] == {"orders": 7, "receipts": 10}
+    assert p["max_bad_row_share"] == 0.05 and p["upper_case_skus"] is False and p["fuzzy_header_cutoff"] == 0.9
+
+
+def test_confirm_shows_only_client_settings(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
+    assert at.multiselect(key="cs::peak_months").value == [11, 12]
+    assert at.number_input(key="cs::max_gap_days_orders").value == 4
+    assert at.number_input(key="cs::max_bad_row_share").value == 1.0  # percent
+    assert at.selectbox(key="cs::assortment").options == ["consumer goods", "industrial", "grocery"]
+    assert at.toggle(key="cs::case_sensitive").value is False
+    labels = [n.label.lower() for n in at.number_input]
+    assert not [x for x in labels if "density" in x or "longest side" in x]  # the bands come from the preset
+    assert at.radio(key="cs::line_definition").options == ["row", "order_sku"]
+    assert any(e.label.startswith("Engine settings") for e in at.expander)
+    assert "all defaults" in " ".join(m.value for m in at.markdown)
+    assert at.button(key="cs::reset").disabled
+
+
+def test_client_settings_persist_per_client_and_reset(tmp_path, monkeypatch):
+    import yaml
+    folder = _copy(tmp_path / "client")
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.multiselect(key="cs::peak_months").set_value([12]).run()
+    at.selectbox(key="cs::assortment").set_value("grocery").run()
+    at.radio(key="cs::line_definition").set_value("order_sku").run()
+    assert not at.exception, at.exception
+    assert "3 differ from defaults" in " ".join(m.value for m in at.markdown)
+    saved = yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))["settings"]
+    assert saved == {"peak_months": [12], "assortment": "grocery", "line_definition": "order_sku"}
+    # a later session for Acme starts from them; Beta does not
+    at = _again(tmp_path, monkeypatch, folder)
+    assert at.multiselect(key="cs::peak_months").value == [12]
+    assert at.selectbox(key="cs::assortment").value == "grocery"
+    assert at.radio(key="cs::line_definition").value == "order_sku"
+    beta = _app(tmp_path, monkeypatch, folder=folder, client="Beta")
+    assert beta.multiselect(key="cs::peak_months").value == [11, 12]
+    assert beta.selectbox(key="cs::assortment").value == "consumer goods"
+    # Reset puts Acme back on the defaults, saved too
+    at = _next(at, "cs::reset")
+    assert at.multiselect(key="cs::peak_months").value == [11, 12] and at.button(key="cs::reset").disabled
+    assert yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))["settings"] == {}
+
+
+def test_peak_months_change_the_coverage_warning(tmp_path, monkeypatch):
+    # the sample client's orders run Dec 2024 to Apr 2025: no November
+    from gtpfit.ingest import IngestParams
+    from gtpfit.ingest.coverage import coverage
+    o = pd.DataFrame({"order_date": pd.to_datetime(["2024-12-15", "2025-04-13"]), "order_id": ["a", "b"],
+                      "sku": ["x", "y"], "qty": [1, 1]})
+    assert any("No orders in Nov" in w for w in coverage(o, IngestParams()).warnings)
+    assert not any("peak season" in w for w in coverage(o, IngestParams(peak_months=(12,))).warnings)
+    folder = _copy(tmp_path / "client")
+    at = _next(_app(tmp_path, monkeypatch, folder=folder), "ing::run")
+    assert any("No orders in Nov" in w.value for w in at.warning)
+    at = _again(tmp_path, monkeypatch, folder)
+    at.multiselect(key="cs::peak_months").set_value([6, 7]).run()
+    at = _next(at, "ing::run")
+    text = " ".join(w.value for w in at.warning)
+    assert "No orders in Jun, Jul" in text and "No orders in Nov" not in text
+
+
+def test_line_definition_recorded_in_receipt(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
+    at.radio(key="cs::line_definition").set_value("order_sku").run()
+    at = _next(_next(at, "ing::run"), "ing::to4")
+    receipt = (_ws(tmp_path) / "_ingest" / "data_receipt.html").read_text(encoding="utf-8")
+    assert "Order line definition:</b> order_sku" in receipt

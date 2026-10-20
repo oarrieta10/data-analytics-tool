@@ -80,4 +80,3 @@ def show() -> None:
     c2.download_button("Data request template (Excel)", request_xlsx(), "data_request.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        icon=":material/table:", key="ing::tpl_xlsx")
-    widgets.thresholds()

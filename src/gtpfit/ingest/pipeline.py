@@ -553,12 +553,13 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
 
 
 def write_outputs(result: IngestResult, out_dir, client: str | None = None, detections=None,
-                  requested=None, folder=None) -> Path:
+                  requested=None, folder=None, line_definition=None) -> Path:
     """Canonical tables as Parquet, plus issues, units, rejects, a WMS profile draft, and the client-facing
     files: accepted_blocks.csv, rejects_for_client.csv and data_receipt.html.
 
     requested: issue keys ("table:code") the consultant has asked the client to resend.
     folder: the folder the files were read from, recorded in the receipt.
+    line_definition: what counts as an order line for this client (gtpfit.lines), recorded in the receipt.
     """
     from .exports import accepted_blocks, client_rejects
     from .receipt import data_receipt
@@ -579,6 +580,7 @@ def write_outputs(result: IngestResult, out_dir, client: str | None = None, dete
     save_wms_profile(profile_from_result(result, "draft"), out / "wms_profile_draft.yaml")
     accepted_blocks(result).to_csv(out / "accepted_blocks.csv", index=False, encoding="utf-8")
     client_rejects(result).to_csv(out / "rejects_for_client.csv", index=False, encoding="utf-8")
-    (out / "data_receipt.html").write_text(data_receipt(result, client, detections, requested, folder), encoding="utf-8")
+    (out / "data_receipt.html").write_text(data_receipt(result, client, detections, requested, folder,
+                                                               line_definition), encoding="utf-8")
     con.close()
     return out

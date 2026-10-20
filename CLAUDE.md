@@ -35,11 +35,11 @@ interactive HTML report.
     `request_template.py` data request (HTML / Excel) from the schema
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
-  - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files → 3 Review → 4 Done (`state.py` session,
+  - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files (+ client settings) → 3 Review → 4 Done (`state.py` session,
     folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
     a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
 - `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
-  date format; saved automatically), `client.yaml` (recent folders) — git-ignored; client files are never copied
+  date format; saved automatically), `client.yaml` (recent folders, client settings) — git-ignored; client files are never copied
 - `src/gtpfit/ingest/learned_synonyms.yaml` — client column names taught with "Remember this synonym" (global;
   committed; column names only, never values)
 - `tests/fixtures/` — frozen sample client (`sample_client/`, its WMS profile, expected findings) and
@@ -98,3 +98,9 @@ python -m pytest -q
   cross-client profiles: revisit after about ten clients. `--wms FILE` on the CLI still takes any profile YAML.
 - Coverage: orders should span 12 months (`min_coverage_days`) and the peak months (`peak_months`); short or
   peak-less history is a warning, not a block.
+- **Client settings vs engine settings.** Every threshold stays in `IngestParams` with its source. The Confirm
+  step shows only the client settings (peak months, longest order gap, unusable-row share, assortment type,
+  SKU case sensitivity, order-line definition), saved under `settings:` in the client's `client.yaml` (only
+  values that differ from the defaults). Assortment type is a preset (`params.ASSORTMENTS`) that sets the three
+  unit sanity bands together; the bands are never edited one by one in the UI. Everything else is in a
+  collapsed "Engine settings", for the session only.

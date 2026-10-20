@@ -6,6 +6,8 @@ field claimed twice disable "Run ingest".  The confirmed columns are saved
 automatically for the client and offered again ("using last confirmed
 mapping") when the next file looks like the same extract.  A hand-made match
 can be taught to automatic matching for every client ("Remember this synonym").
+Below the mapping, the client settings (peak months, limits, assortment, SKU
+case, what counts as an order line), saved for the client.
 """
 from __future__ import annotations
 
@@ -219,6 +221,9 @@ def show() -> None:
         mappings[t], problems, seen[t] = mp, problems + pr, hdr
         if mp != auto:
             overrides[t] = mp
+
+    st.subheader("Client settings")
+    widgets.client_settings()
 
     c1, c2 = st.columns([1, 5])
     if c1.button("← Back", key="ing::back1"):

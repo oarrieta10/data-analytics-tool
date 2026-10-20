@@ -1,6 +1,6 @@
 """receipt.py — the data receipt: one self-contained HTML page saying what was received and what was found.
 
-    data_receipt(result, client=None, detections=None, requested=None, folder=None) -> str
+    data_receipt(result, client=None, detections=None, requested=None, folder=None, line_definition=None) -> str
 
 Lists the files received (and what each was used as), rows kept and set aside,
 the period covered, every block / warning, the blocks accepted with their
@@ -38,7 +38,8 @@ def _t(v) -> str:
     return escape("" if v is None else str(v))
 
 
-def data_receipt(result, client: str | None = None, detections=None, requested=None, folder=None) -> str:
+def data_receipt(result, client: str | None = None, detections=None, requested=None, folder=None,
+                 line_definition: str | None = None) -> str:
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     iss = result.issues
     blocks, warns = iss[iss.severity == "block"], iss[iss.severity == "warn"]
@@ -56,6 +57,10 @@ def data_receipt(result, client: str | None = None, detections=None, requested=N
     # files received
     if folder:
         h.append(f"<p><b>Folder read:</b> <code>{_t(folder)}</code> (read in place; nothing copied)</p>")
+    if line_definition:
+        from gtpfit.lines import LINE_DEFINITIONS
+        h.append(f"<p><b>Order line definition:</b> {_t(line_definition)}: "
+                 f"{_t(LINE_DEFINITIONS.get(line_definition, ''))}</p>")
     h.append("<h2>Files received</h2><table><tr><th>File</th><th>Used as</th><th>Read as</th>"
              "<th class='n'>Rows in file</th><th class='n'>Rows kept</th><th class='n'>Set aside</th></tr>")
     det = {d.label: d for d in (detections or [])}

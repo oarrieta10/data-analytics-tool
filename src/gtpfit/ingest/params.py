@@ -64,3 +64,29 @@ class IngestParams:
     # SKU clean-up: strip spaces always; upper-case unless the client's SKUs
     # are case-sensitive.
     upper_case_skus: bool = True
+
+
+# Assortment presets: the three unit sanity bands above, set together from the
+# kind of goods the client stores (the workbench offers these, not the bands).
+# Source: consultant judgement.  Confidence: low; see each note.
+ASSORTMENTS = {
+    # Mixed consumer goods / e-commerce / apparel: the IngestParams defaults.
+    "consumer goods": dict(unit_longest_side_in=(4.0, 36.0), case_longest_side_in=(8.0, 48.0),
+                           density_lb_ft3=(2.0, 40.0)),
+    # MRO / hardware / spare parts: small dense parts to long items; bagged
+    # fasteners and machined parts run far denser than consumer goods.
+    "industrial": dict(unit_longest_side_in=(1.0, 48.0), case_longest_side_in=(4.0, 60.0),
+                       density_lb_ft3=(4.0, 150.0)),
+    # Grocery / beverage: compact units; liquids near water (62 lb/ft3) in the
+    # case, snacks and paper goods light.
+    "grocery": dict(unit_longest_side_in=(2.0, 20.0), case_longest_side_in=(6.0, 30.0),
+                    density_lb_ft3=(3.0, 70.0)),
+}
+DEFAULT_ASSORTMENT = "consumer goods"
+
+
+def assortment_bands(name: str) -> dict:
+    """The three unit sanity bands for an assortment type (ValueError for an unknown one)."""
+    if name not in ASSORTMENTS:
+        raise ValueError(f"Unknown assortment {name!r}; choose from {sorted(ASSORTMENTS)}")
+    return dict(ASSORTMENTS[name])
