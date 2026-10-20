@@ -1,15 +1,20 @@
 """pipeline.py — read, map, type, convert and check client files into canonical tables.
 
     ingest_table(sources, table, profile=None, params=None, accept=()) -> TableResult
-    ingest_sources({table: [Source]}, profile=None, params=None, accept=(), strict=True) -> IngestResult
-    ingest_folder(folder, profile=None, params=None, accept=(), strict=True) -> IngestResult
-    write_outputs(result, out_dir) -> Path
+    ingest_sources({table: [Source]}, profile=None, params=None, accept=None, strict=True,
+                   on_progress=None) -> IngestResult
+    ingest_folder(folder, profile=None, params=None, accept=None, strict=True) -> IngestResult
+    write_outputs(result, out_dir, client=None, detections=None, requested=None) -> Path
+
+accept: {"table:code" or "code": reason} (or {key: {"reason", "at"}}); a block is
+only accepted with a reason, and the reason travels to accepted_blocks.csv and
+the data receipt.
 
 Canonical columns and units are in schema.py (inches, pounds, dates, seconds).
 Rows that cannot be used (zero/negative quantity, blank or unreadable key or
 date) go to `rejects` with a reason; nothing is dropped silently.  Problems
 that make the data untrustworthy are "block" issues: ingest_folder raises
-IngestError unless the consultant accepts those codes.
+IngestError unless the consultant accepts them, each with a reason.
 
 Does not judge item-level data quality (placeholders, outliers, single rows in
 the wrong unit, duplicate SKUs, orphans) — that is quality/.
@@ -22,7 +27,9 @@ from pathlib import Path
 import pandas as pd
 
 from . import coerce
-from .checks import Issue, fmt_day, issues_frame, missing_day_runs, snapshot_gaps
+from .checks import (Issue, accepted_for, fmt_day, issues_frame, missing_day_runs, normalise_accept,
+                     snapshot_gaps)
+from .coverage import Coverage, coverage as order_coverage
 from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile, suggest_mapping
 from .params import IngestParams
 from .classify import classify, list_sources
@@ -40,7 +47,8 @@ class IngestError(Exception):
         b = result.issues[result.issues.severity == "block"]
         lines = [f"  [{r.table}] {r.code}: {r.message}" for r in b.itertuples()]
         super().__init__("Ingest refused the data:\n" + "\n".join(lines) +
-                         "\nFix the files, or pass accept=[code] for a block you have checked.")
+                         "\nFix the files, or accept a block you have checked with a reason: "
+                         "accept={'table:code': 'reason'}.")
 
 
 @dataclass
@@ -71,24 +79,36 @@ class IngestResult:
     date_formats: dict
     unit_evidence: pd.DataFrame | None = None
     inputs: dict = field(default_factory=dict)   # table -> [Source] actually ingested
+    coverage: Coverage | None = None             # period the orders cover (coverage.py)
+    acceptances: dict = field(default_factory=dict)  # normalised accept: key -> {"reason", "at"}
 
     @property
     def blocked(self) -> bool:
         return bool((self.issues["severity"] == "block").any())
 
+    @property
+    def accepted(self) -> list:
+        """Blocks the consultant accepted: table, code, message, reason, accepted_at."""
+        out = []
+        for r in self.issues[self.issues["severity"] == "accepted"].itertuples():
+            a = accepted_for(self.acceptances, r.table, r.code) or {}
+            out.append(dict(table=r.table, code=r.code, message=r.message, reason=a.get("reason", ""),
+                            accepted_at=a.get("at", "")))
+        return out
+
 
 # ---- one table ------------------------------------------------------------------
 
 def ingest_table(sources, table: str, profile: WmsProfile | None = None, params: IngestParams | None = None,
-                 accept=()) -> TableResult:
+                 accept=None) -> TableResult:
     params = params or IngestParams()
     sheet = profile.sheets.get(table) if profile else None
     paths = [as_source(p, sheet) for p in (sources if isinstance(sources, (list, tuple)) else [sources])]
     res = TableResult(table, [str(p) for p in paths])
-    accepted = set(accept)
+    acc = normalise_accept(accept)
 
     def add(code, severity, message, count=None, share=None, fld=None):
-        if severity == "block" and code in accepted:
+        if severity == "block" and accepted_for(acc, table, code):
             severity = "accepted"
         res.issues.append(Issue(table, code, severity, message,
                                 None if count is None else int(count),
@@ -412,24 +432,33 @@ def discover(paths, profile=None, params=None, add=None) -> dict:
 
 
 def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: IngestParams | None = None,
-                   accept=(), strict: bool = True, _issues=None, where: str = "the inputs") -> IngestResult:
-    """Ingest confirmed sources: {table: [Source or path]}.  Missing tables are reported like a folder run."""
-    params = params or IngestParams()
-    accepted = set(accept)
-    issues: list[Issue] = list(_issues or [])
+                   accept=None, strict: bool = True, _issues=None, where: str = "the inputs",
+                   on_progress=None) -> IngestResult:
+    """Ingest confirmed sources: {table: [Source or path]}.  Missing tables are reported like a folder run.
 
-    def add(table, code, severity, message):
-        if severity == "block" and code in accepted:
+    on_progress(event) is called before and after each table with
+    {"table", "index", "total", "stage": "start" | "done", "rows"}.
+    """
+    params = params or IngestParams()
+    acc = normalise_accept(accept)
+    issues: list[Issue] = list(_issues or [])
+    progress = on_progress or (lambda e: None)
+
+    def add(table, code, severity, message, count=None, share=None):
+        if severity == "block" and accepted_for(acc, table, code):
             severity = "accepted"
-        issues.append(Issue(table, code, severity, message))
+        issues.append(Issue(table, code, severity, message, count, share))
 
     tables, rejects, units, mappings, sources, dfmt, evid, inputs = {}, {}, [], {}, {}, {}, None, {}
-    for table in TABLES:
+    for i, table in enumerate(TABLES):
         if not assign.get(table):
             add(table, "table_missing", "block" if table in REQUIRED_TABLES else "warn",
                 f"No {table} file found in {where}.")
             continue
-        r = ingest_table(assign[table], table, profile, params, accept)
+        progress(dict(table=table, index=i, total=len(TABLES), stage="start", rows=None))
+        r = ingest_table(assign[table], table, profile, params, acc)
+        progress(dict(table=table, index=i, total=len(TABLES), stage="done",
+                      rows=None if r.table is None else len(r.table)))
         issues += r.issues
         sources[table] = ", ".join(r.paths)
         inputs[table] = [as_source(x) for x in assign[table]]
@@ -445,29 +474,38 @@ def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: Inge
             evid = r.unit_evidence
     if "orders" in tables and "cases" in tables["orders"]:
         tables["orders"] = _apply_case_packs(tables["orders"], tables.get("item_master"), issues)
+    cov = None
+    if "orders" in tables and len(tables["orders"]):
+        cov = order_coverage(tables["orders"], params)
+        if cov.short:
+            add("orders", "coverage_short", "warn", cov.warnings[0], count=cov.span_days)
+        if not cov.peak_covered:
+            add("orders", "peak_not_covered", "warn", cov.warnings[-1])
     res = IngestResult(tables, rejects, issues_frame(issues),
                        pd.concat(units, ignore_index=True) if units else pd.DataFrame(), mappings, sources, dfmt,
-                       evid, inputs)
+                       evid, inputs, cov, acc)
     if strict and res.blocked:
         raise IngestError(res)
     return res
 
 
 def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParams | None = None,
-                  accept=(), strict: bool = True) -> IngestResult:
+                  accept=None, strict: bool = True, on_progress=None) -> IngestResult:
     """Every readable file in the folder (not subfolders), assigned by WMS profile or by classify()."""
     folder = Path(folder)
     params = params or IngestParams()
+    acc = normalise_accept(accept)
     pre: list[Issue] = []
 
     def add(table, code, severity, message):
-        if severity == "block" and code in set(accept):
+        if severity == "block" and accepted_for(acc, table, code):
             severity = "accepted"
         pre.append(Issue(table, code, severity, message))
 
     files = [p for p in folder.iterdir() if p.is_file()]
     found = discover(files, profile, params, add)
-    return ingest_sources(found, profile, params, accept, strict, _issues=pre, where=str(folder))
+    return ingest_sources(found, profile, params, acc, strict, _issues=pre, where=str(folder),
+                          on_progress=on_progress)
 
 
 def _apply_case_packs(o: pd.DataFrame, im: pd.DataFrame | None, issues: list) -> pd.DataFrame:
@@ -514,8 +552,15 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
                       columns={t: dict(m.mapping) for t, m in result.mappings.items()})
 
 
-def write_outputs(result: IngestResult, out_dir) -> Path:
-    """Canonical tables as Parquet, plus issues, units, rejects and a WMS profile draft."""
+def write_outputs(result: IngestResult, out_dir, client: str | None = None, detections=None,
+                  requested=None) -> Path:
+    """Canonical tables as Parquet, plus issues, units, rejects, a WMS profile draft, and the client-facing
+    files: accepted_blocks.csv, rejects_for_client.csv and data_receipt.html.
+
+    requested: issue keys ("table:code") the consultant has asked the client to resend.
+    """
+    from .exports import accepted_blocks, client_rejects
+    from .receipt import data_receipt
     import duckdb
     out = Path(out_dir)
     (out / "rejects").mkdir(parents=True, exist_ok=True)
@@ -531,5 +576,8 @@ def write_outputs(result: IngestResult, out_dir) -> Path:
     result.issues.to_csv(out / "issues.csv", index=False, encoding="utf-8")
     result.units.to_csv(out / "units.csv", index=False, encoding="utf-8")
     save_wms_profile(profile_from_result(result, "draft"), out / "wms_profile_draft.yaml")
+    accepted_blocks(result).to_csv(out / "accepted_blocks.csv", index=False, encoding="utf-8")
+    client_rejects(result).to_csv(out / "rejects_for_client.csv", index=False, encoding="utf-8")
+    (out / "data_receipt.html").write_text(data_receipt(result, client, detections, requested), encoding="utf-8")
     con.close()
     return out

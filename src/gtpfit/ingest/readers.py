@@ -572,6 +572,77 @@ def read(source, columns=None, limit: int | None = None) -> tuple[pd.DataFrame, 
     return df, meta
 
 
+_DELIMS = {",": "comma", "\t": "tab", "|": "pipe", ";": "semicolon"}
+
+
+def describe(source) -> str:
+    """How a source is read, in plain words: "pipe-delimited, UTF-8 (gzip)", "Excel sheet 'Data'"."""
+    src = as_source(source)
+    outer = detect_format(src.path)
+    s = _resolve(src)
+    fmt = detect_format(s.path)
+    if fmt == "delimited":
+        enc = _encoding(s.path)
+        text = f"{_DELIMS.get(_text_head(s.path, enc)[1], 'delimited')}-delimited, {enc.upper()}"
+    elif fmt == "excel":
+        h = REGISTRY["excel"]._top(s.path, s.part)[0]
+        sheet = s.part if s.part is not None else REGISTRY["excel"].parts(s.path)[0]
+        text = f"Excel sheet '{sheet}'" + (f", header on row {h + 1}" if h else "")
+    elif fmt in ("sqlite", "duckdb"):
+        text = f"{'SQLite' if fmt == 'sqlite' else 'DuckDB'} table '{REGISTRY[fmt]._table(s.path, s.part)}'"
+    else:
+        text = {"json": "JSON", "parquet": "Parquet", "arrow": "Arrow / Feather", "orc": "ORC"}[fmt]
+    return text + {"gzip": " (gzip)", "zip": " (in zip)"}.get(outer, "")
+
+
+def count_rows(source) -> int | None:
+    """Data rows in a source (header excluded), as cheaply as the format allows; None if it cannot tell."""
+    s = _resolve(as_source(source))
+    fmt = detect_format(s.path)
+    p = s.path.as_posix().replace("'", "''")
+    try:
+        import duckdb
+        if fmt == "delimited":
+            enc = _encoding(s.path)
+            if enc == "utf-8":
+                sep = _text_head(s.path, enc)[1].replace("'", "''")
+                return int(duckdb.sql(f"select count(*) from read_csv('{p}', header=true, all_varchar=true, "
+                                      f"sep='{sep}')").fetchone()[0])
+            with open(s.path, encoding=enc, newline="") as f:
+                return max(sum(1 for line in f if line.strip()) - 1, 0)
+        if fmt == "excel":
+            h = REGISTRY["excel"]._top(s.path, s.part)[0]
+            return max(int(_calamine_sheet(s.path, s.part).height) - h - 1, 0)
+        if fmt in ("json", "parquet"):
+            fn = "read_json" if fmt == "json" else "read_parquet"
+            return int(duckdb.sql(f"select count(*) from {fn}('{p}')").fetchone()[0])
+        if fmt == "arrow":
+            import pyarrow.ipc as ipc
+            try:
+                with ipc.open_file(s.path) as r:
+                    return int(sum(r.get_batch(i).num_rows for i in range(r.num_record_batches)))
+            except Exception:  # Feather v1
+                import pyarrow.feather as feather
+                return int(feather.read_table(s.path).num_rows)
+        if fmt == "orc":
+            import pyarrow.orc as orc
+            return int(orc.ORCFile(s.path).nrows)
+        if fmt == "sqlite":
+            reader = REGISTRY["sqlite"]
+            with reader._con(s.path) as con:
+                return int(con.execute(f"select count(*) from {_q(reader._table(s.path, s.part))}").fetchone()[0])
+        if fmt == "duckdb":
+            reader = REGISTRY["duckdb"]
+            con = reader._con(s.path)
+            try:
+                return int(con.execute(f"select count(*) from {_q(reader._table(s.path, s.part))}").fetchone()[0])
+            finally:
+                con.close()
+    except Exception:  # a count is a convenience; reading still reports any real problem
+        return None
+    return None
+
+
 def _dupes(hdr) -> list:
     seen, d = set(), []
     for h in hdr:

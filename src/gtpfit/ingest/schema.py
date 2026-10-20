@@ -100,6 +100,19 @@ TABLES: dict[str, list[Field]] = {
     ],
 }
 
+# Field names for people (data request template, receipt, workbench).
+FIELD_LABEL = {
+    "sku": "SKU / item number", "description": "Description", "category": "Category",
+    "subcategory": "Sub-category", "unit_l": "Unit length", "unit_w": "Unit width", "unit_h": "Unit height",
+    "unit_weight": "Unit weight", "case_qty": "Case quantity", "case_l": "Case length", "case_w": "Case width",
+    "case_h": "Case height", "case_weight": "Case weight", "order_id": "Order number", "order_date": "Pick / ship date",
+    "qty": "Quantity (units)", "cases": "Full cases", "pick_secs": "Pick time", "channel": "Channel",
+    "receipt_id": "Receipt / ASN / shipment number", "po": "PO number", "receipt_date": "Receipt date",
+    "snapshot_date": "Snapshot date", "location": "Location", "on_hand": "Units on hand",
+}
+TABLE_LABEL = {"item_master": "Item master", "orders": "Order history", "receipts": "Receipts (inbound)",
+               "inventory": "Inventory snapshots"}
+
 # What each field means, for people choosing columns (workbench) and for the report.
 FIELD_HELP = {
     "item_master": {

@@ -25,6 +25,16 @@ class IngestParams:
     # Snapshots: a spacing above this multiple of the median spacing is a gap.
     snapshot_gap_factor: float = 1.5
 
+    # Order history long enough to design from: 12 months, less a week for a
+    # year-end closure or a 52-week extract (364 days).  Shorter -> warn.
+    # Source: consultant judgement (a design year must include every season).
+    # Confidence: medium.
+    min_coverage_days: int = 358
+    # Months holding the client's peak season; orders must have rows in each.
+    # Source: US retail / e-commerce peak (Black Friday to Christmas); change
+    # per client (e.g. back-to-school, spring garden).  Confidence: medium.
+    peak_months: tuple = (11, 12)
+
     # Share of rows with zero / negative quantity (or unparseable keys) that
     # are set aside with a warning; above this the table is refused.
     # Source: consultant judgement.  Confidence: medium.

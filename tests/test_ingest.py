@@ -141,7 +141,7 @@ def test_excel_row_limit_blocks_and_can_be_accepted(ds, tmp_path):
     params = IngestParams(excel_row_limits=(3000,))
     r = ingest_folder(folder, profile=load_wms_profile(WMS), params=params, strict=False)
     assert "excel_row_limit" in _codes(r, "block")
-    r2 = ingest_folder(folder, profile=load_wms_profile(WMS), params=params, accept=["excel_row_limit"])
+    r2 = ingest_folder(folder, profile=load_wms_profile(WMS), params=params, accept={"excel_row_limit": "client confirmed the file ends there"})
     assert not r2.blocked and "excel_row_limit" in _codes(r2, "accepted")
 
 
