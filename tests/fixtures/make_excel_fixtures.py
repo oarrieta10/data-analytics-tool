@@ -1,30 +1,26 @@
-"""Make the Excel test fixtures from synthetic data (run once; needs Excel on Windows).
+"""Make the Excel test fixtures from the sample client (run once; needs Excel on Windows).
 
     python tests/fixtures/make_excel_fixtures.py
 
 Writes excel_sample.xlsx (sheets: 'Read me', 'Items' under two title rows,
-'Orders'), then has Excel save it as .xls, .xlsb and .xlsm.  Python can read
-those formats but not write them, which is why they are committed fixtures.
-Synthetic data only.
+'Orders') from tests/fixtures/sample_client, then has Excel save it as .xls,
+.xlsb and .xlsm.  Python can read those formats but not write them, which is
+why they are committed fixtures.  No real client data.
 """
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-from gtpfit.synth import generate, load_profile
-
 HERE = Path(__file__).resolve().parent
+SAMPLE = HERE / "sample_client"
 FORMATS = {".xls": 56, ".xlsb": 50, ".xlsm": 52}  # Excel XlFileFormat codes
+ITEMS, ORDERS = 150, 400  # rows kept: small fixtures, still several pages of data
 
 
 def main():
-    with tempfile.TemporaryDirectory() as tmp:
-        generate(load_profile(n_skus=150, ecom_orders_per_day=40, b2b_orders_per_day=2, start_date="2025-01-06",
-                              days=10, seed=3), tmp)
-        items = pd.read_csv(Path(tmp) / "item_master.csv", dtype=str, keep_default_na=False)
-        orders = pd.read_csv(Path(tmp) / "orders.csv", dtype=str, keep_default_na=False).head(400)
+    items = pd.read_csv(SAMPLE / "item_master.csv", dtype=str, keep_default_na=False).head(ITEMS)
+    orders = pd.read_csv(SAMPLE / "orders.csv", dtype=str, keep_default_na=False).head(ORDERS)
     src = HERE / "excel_sample.xlsx"
     with pd.ExcelWriter(src, engine="openpyxl") as w:
         pd.DataFrame({"Notes": ["Exported from WMS", "Do not edit"]}).to_excel(w, sheet_name="Read me", index=False)

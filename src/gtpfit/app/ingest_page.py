@@ -306,16 +306,13 @@ def page():
             folder = _client_dir(client)
         else:
             folders = _folders()
-            choice = st.selectbox("Folder", folders + ["Other folder..."], key="ing::folder",
-                                  index=folders.index("data/synthetic/default") if "data/synthetic/default" in folders
-                                  else 0)
+            choice = st.selectbox("Folder", folders + ["Other folder..."], key="ing::folder")
             folder = Path(st.text_input("Folder path", value=str(ROOT / "data"))) if choice == "Other folder..." \
                 else ROOT / choice
         wms = _profiles(folder)
         names = list(wms) + [AUTO]
         local = [n for n in names if n.startswith("local: ")]
-        default = local[0] if local else ("synthetic" if "synthetic" in names and "synthetic" in str(folder)
-                                          else AUTO)
+        default = local[0] if local else AUTO
         wchoice = st.selectbox("WMS profile", names, index=names.index(default), key=f"wmspick::{folder}",
                                help="Column names, units and date format for a client system. 'local:' profiles "
                                     "live next to the client's data and are never committed.")

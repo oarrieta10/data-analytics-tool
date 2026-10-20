@@ -1,6 +1,6 @@
-# Column layout of gtpfit.synth exports; stands in for a client WMS.
-name: synthetic
-description: gtpfit.synth client-style export (US units, month-first dates)
+# Column layout of the frozen sample client (tests/fixtures/sample_client); stands in for a client WMS.
+name: sample
+description: sample client export (US units, month-first dates)
 units: {length: in, weight: lb}
 date_format: "%m/%d/%Y"
 files:

@@ -1,6 +1,7 @@
 """Reader registry: every supported client file type reads to the same canonical table as the CSV.
 
-Synthetic data only.  .xls / .xlsb / .xlsm fixtures are made by tests/fixtures/make_excel_fixtures.py
+Uses the frozen sample client (tests/fixtures/sample_client).  .xls / .xlsb / .xlsm fixtures are made by
+tests/fixtures/make_excel_fixtures.py
 (needs Excel on the machine) and committed; their tests skip if the files are missing.
 """
 import gzip
@@ -16,20 +17,16 @@ import pytest
 from gtpfit.ingest import ingest_folder, ingest_sources, ingest_table, load_wms_profile
 from gtpfit.ingest.classify import classify, list_sources
 from gtpfit.ingest.readers import Source, UnsupportedFileError, detect_format
-from gtpfit.synth import generate, load_profile
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
-WMS = ROOT / "wms_profiles" / "synthetic.yaml"
-TINY = dict(n_skus=300, ecom_orders_per_day=60, b2b_orders_per_day=3, start_date="2025-01-06", days=40)
+WMS = FIX / "sample_wms_profile.yaml"
 FILES = {"item_master": "item_master", "orders": "orders", "receipts": "receipts", "inventory": "inventory_snapshots"}
 
 
 @pytest.fixture(scope="module")
-def ds(tmp_path_factory):
-    out = tmp_path_factory.mktemp("readers_src")
-    generate(load_profile(**TINY), out)
-    return out
+def ds():
+    return FIX / "sample_client"  # read-only; every format below is written to tmp_path
 
 
 @pytest.fixture(scope="module")

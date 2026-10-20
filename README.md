@@ -1,18 +1,15 @@
 # gtp-fit
 
-Goods-to-person technology fit tool. The synthetic data generator and ingest are built.
+A goods-to-person technology fit tool. **Ingest** is built: it reads a client's exports in any common
+format, guesses which table each file holds, lets you confirm the files and columns, and refuses data
+it can't trust.
 
 ```
-pip install -e .[dev]
-python -m gtpfit.synth --out data/synthetic/default
+pip install -e .[dev,app]
+python -m gtpfit.app                                   # workbench: drop files, confirm, ingest (localhost:8501)
+python -m gtpfit.ingest FOLDER [--wms PROFILE.yaml]    # command line -> FOLDER/_ingest
+python -m pytest -q
 ```
 
-This writes four client-style CSVs (item master, orders, receipts, inventory snapshots), an answer key
-under `_truth/`, a `manifest.json`, and `synthetic_data_report.html`, which checks the
-dataset against typical warehouse ranges. A one-year, 8,000-SKU, ~1M-line dataset takes about 25 seconds.
-E-commerce baskets can change on promotion and Q4 days (`peak_shape:` in a profile, off by default; the true
-per-day shape is in `_truth/calendar.csv`). Module 2, ingest, reads a client folder into canonical tables and refuses data it can't trust:
-```
-python -m gtpfit.ingest data/synthetic/default --wms wms_profiles/synthetic.yaml
-```
-See `CLAUDE.md` for the plan and ground rules.
+Tests use a small frozen sample client in `tests/fixtures/` (see its README). Client files stay in
+`data/`, which git ignores. See `CLAUDE.md` for the plan and ground rules.

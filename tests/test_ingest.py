@@ -1,4 +1,4 @@
-"""Tests for ingest: mapping, reading, units, dates, refusals — scored on gtpfit.synth data."""
+"""Tests for ingest: mapping, reading, units, dates, refusals, on the frozen sample client in tests/fixtures."""
 import shutil
 from pathlib import Path
 
@@ -6,21 +6,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gtpfit.synth import load_profile, generate
 from gtpfit.ingest import (IngestError, IngestParams, ingest_folder, ingest_table, load_wms_profile,
                            save_wms_profile, suggest_mapping)
 
 ROOT = Path(__file__).resolve().parents[1]
-WMS = ROOT / "wms_profiles" / "synthetic.yaml"
-# Dec -> Apr: covers the Dec 25 and Jan 1 closures, ~45k order lines
-SMALL = dict(n_skus=600, ecom_orders_per_day=150, b2b_orders_per_day=4, start_date="2024-12-15", days=120)
+FIX = ROOT / "tests" / "fixtures"
+WMS = FIX / "sample_wms_profile.yaml"
+# frozen sample client (see tests/fixtures/README.md): Dec 15 -> 120 days, so Dec 25 and Jan 1 closures
+SAMPLE = FIX / "sample_client"
+EXPECTED = FIX / "sample_expected.csv"  # planted problems the tests must find
 
 
 @pytest.fixture(scope="module")
-def ds(tmp_path_factory):
-    out = tmp_path_factory.mktemp("ingest_src")
-    generate(load_profile(**SMALL), out)
-    return out
+def ds():
+    return SAMPLE  # read-only: tests that change files work on copies (_clone)
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +48,7 @@ def _codes(result, severity=None):
 
 # ---- happy path -------------------------------------------------------------
 
-def test_synthetic_folder_ingests_without_blocks(res, ds):
+def test_sample_folder_ingests_without_blocks(res, ds):
     assert not res.blocked, res.issues[res.issues.severity == "block"]
     assert set(res.tables) == {"item_master", "orders", "receipts", "inventory"}
     o = res.tables["orders"]
@@ -122,7 +121,7 @@ def test_bad_qty_rows_quarantined_match_answer_key(res, ds):
     rej = res.rejects["orders"]
     bad = rej[rej.reason == "bad_qty"]
     got = set(zip(bad["Order Nbr"], bad["Item Number"].str.strip().str.upper()))
-    truth = pd.read_csv(ds / "_truth/defects.csv")
+    truth = pd.read_csv(EXPECTED)
     keys = truth.loc[truth.defect == "zero_or_negative_qty", "key"].str.removeprefix("row:")
     want = {(k.split("|")[0], k.split("|")[1].strip().upper()) for k in keys}
     assert got == want
@@ -249,7 +248,7 @@ def test_cp1252_csv_is_decoded(ds, tmp_path):
 
 
 def test_sku_normalisation_counted(res, ds):
-    truth = pd.read_csv(ds / "_truth/defects.csv")
+    truth = pd.read_csv(EXPECTED)
     n = (truth.defect == "sku_format_variant").sum()
     i = res.issues
     row = i[(i.table == "orders") & (i.code == "sku_normalised")]
@@ -355,7 +354,7 @@ def test_common_wms_headers_map(table, headers, want):
 
 
 def _cases_eaches(ds, res, tmp_path, drop_pack_for=None):
-    """Synthetic orders rewritten the way some WMSs export: full cases in 'Cases', loose units in 'Eaches'."""
+    """Sample orders rewritten the way some WMSs export: full cases in 'Cases', loose units in 'Eaches'."""
     o = _raw(ds, "orders")
     im = res.tables["item_master"].drop_duplicates("sku").set_index("sku")["case_qty"]
     sku = o["Item Number"].str.strip().str.upper()

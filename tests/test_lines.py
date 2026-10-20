@@ -50,12 +50,3 @@ def test_order_profile_by_definition():
     assert p.loc["Store", "units_per_order"] == q.loc["Store", "units_per_order"] == 16
     assert q.loc["Store", "picks_per_line"] == 1.5
     assert p.loc["All", "orders"] == 2
-
-
-def test_benchmark_shape_uses_definition():
-    from gtpfit.synth.benchmark import shape
-    o = _orders().rename(columns={"qty": "units"})
-    a, _ = shape(o, line_definition="row")
-    b, _ = shape(o, line_definition="order_sku")
-    assert a["store_lines_per_order"] == 3 and b["store_lines_per_order"] == 2
-    assert b["picks_per_line"] == pytest.approx(5 / 4)
