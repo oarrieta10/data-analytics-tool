@@ -1,0 +1,233 @@
+"""widgets.py — pieces shared by the Ingest steps: stepper, header, thresholds, verdict, block cards,
+coverage strip and the detail tabs.  Issue wording comes from gtpfit.ingest.checks.ISSUE_TEXT."""
+from __future__ import annotations
+
+import calendar
+import dataclasses
+import datetime as dt
+
+import pandas as pd
+import streamlit as st
+
+from gtpfit.ingest import IngestParams
+from gtpfit.ingest.checks import explain
+from gtpfit.ingest.coverage import sparkline_svg
+from gtpfit.ingest.schema import FIELD_LABEL, TABLE_LABEL, TABLES
+from gtpfit.lines import LINE_DEFINITIONS, order_profile
+
+from . import state
+
+SEV_LABEL = {"block": "⛔ block", "accepted": "✅ accepted", "warn": "⚠️ warn", "info": "ℹ️ info"}
+
+
+def stepper(current: int) -> None:
+    parts = []
+    for i, name in enumerate(state.STEPS, start=1):
+        mark = "✓" if i < current else str(i)
+        parts.append(f"**({mark}) {name}**" if i == current else f"({mark}) {name}")
+    st.markdown(" — ".join(parts))
+
+
+def header(editable: bool) -> None:
+    """Client · WMS profile · local-data badge.  Editable on Upload; a summary line afterwards."""
+    if not editable:
+        prof = st.session_state.get("ing::wms", state.AUTO)
+        st.caption(f"Client: **{state.client()}** · WMS profile: **{prof}** · 🔒 Data stays on this computer")
+        return
+    c1, c2, c3 = st.columns([2, 2, 1.2], vertical_alignment="bottom")
+    with c1:
+        recent = state.recent_clients()
+        options = recent + [state.NEW_CLIENT]
+        pick = st.selectbox("Client", options, key="ing::client_pick",
+                            help="Required. Outputs and the client's WMS profile are kept under data/workspace/"
+                                 "<client>/ on this computer.")
+        if pick == state.NEW_CLIENT:
+            name = st.text_input("New client name", key="ing::client_new", placeholder="e.g. Acme Retail")
+        else:
+            name = pick
+        st.session_state["ing::client"] = state.safe_name(name)
+    with c2:
+        names = [state.AUTO] + list(state.profiles())
+        cur = st.session_state.get("ing::wms")
+        default = cur if cur in names else next((n for n in names if n.startswith(f"{state.client()}:")), state.AUTO)
+        st.session_state["ing::wms"] = st.selectbox(
+            "WMS profile", names, index=names.index(default), key=f"ing::wms_pick::{state.client()}",
+            help="Column names, units and date format for a client system. Auto-detect matches columns by name.")
+    c3.markdown("🔒 **Data stays on this computer**")
+
+
+def thresholds() -> None:
+    """'Advanced thresholds': every IngestParams field, collapsed, with how many differ and a Reset."""
+    base = dataclasses.asdict(IngestParams())
+    cur = dict(state.params())
+    changed = [k for k in base if json_eq(cur.get(k), base[k]) is False]
+    with st.expander(f"Advanced thresholds ({len(changed)} changed)" if changed else "Advanced thresholds"):
+        if st.button("Reset to defaults", key="thr::reset", disabled=not changed):
+            for k in [k for k in st.session_state.keys() if str(k).startswith("thr::") and k != "thr::reset"]:
+                del st.session_state[k]
+            st.session_state["ing::params"] = base
+            st.rerun()
+        new = {}
+        for name, v in base.items():
+            label = name.replace("_", " ")
+            key = f"thr::{name}"
+            val = cur.get(name, v)
+            if name == "peak_months":
+                months = st.multiselect(label, list(range(1, 13)), default=list(val), key=key,
+                                        format_func=lambda m: calendar.month_name[m],
+                                        help="Months holding the client's peak season; orders must cover them.")
+                new[name] = tuple(sorted(months))
+            elif name == "excel_row_limits":
+                txt = st.text_input(label, ", ".join(str(x) for x in val), key=key,
+                                    help="Row counts that mean a clipped export.")
+                new[name] = tuple(int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit())
+            elif isinstance(v, bool):
+                new[name] = st.checkbox(label, val, key=key)
+            elif isinstance(v, int):
+                new[name] = int(st.number_input(label, value=int(val), step=1, key=key))
+            elif isinstance(v, float):
+                new[name] = float(st.number_input(label, value=float(val), format="%.4f", step=v / 10 or 0.01, key=key))
+            elif isinstance(v, dict):
+                new[name] = {k: int(st.number_input(f"{label}: {k}", value=int(val.get(k, x)), step=1,
+                                                    key=f"{key}::{k}")) for k, x in v.items()}
+            elif isinstance(v, tuple) and len(v) == 2:
+                a, b = st.columns(2)
+                new[name] = (float(a.number_input(f"{label}: low", value=float(val[0]), key=f"{key}::lo")),
+                             float(b.number_input(f"{label}: high", value=float(val[1]), key=f"{key}::hi")))
+            else:
+                new[name] = val
+        st.session_state["ing::params"] = new
+
+
+def json_eq(a, b) -> bool:
+    norm = lambda x: list(x) if isinstance(x, tuple) else x
+    return norm(a) == norm(b)
+
+
+# ---- review pieces ---------------------------------------------------------------------------
+
+def verdict(result) -> None:
+    iss = result.issues
+    nb, nw, ni = (int((iss.severity == s).sum()) for s in ("block", "warn", "info"))
+    na = int((iss.severity == "accepted").sum())
+    tail = f"{nw} warning(s) · {ni} note(s)" + (f" · {na} accepted" if na else "")
+    if nb:
+        st.error(f"**BLOCKED** — {nb} decision(s) needed · {tail}", icon="⛔")
+    elif nw or na:
+        st.warning(f"**Proceed with cautions** — {tail}", icon="⚠️")
+    else:
+        st.success(f"**Clean** — {tail}", icon="✅")
+
+
+def block_key(table, code) -> str:
+    return f"{table or ''}:{code}"
+
+
+def block_cards(result) -> None:
+    """One card per open or accepted block: what happened, design impact, actions."""
+    iss = result.issues[result.issues.severity.isin(["block", "accepted"])]
+    accept = st.session_state.setdefault("ing::accept", {})
+    requested = st.session_state.setdefault("ing::requested", [])
+    for key, grp in iss.groupby(iss.apply(lambda r: block_key(r.table, r.code), axis=1), sort=False):
+        first = grp.iloc[0]
+        t = explain(first.code)
+        is_open = (grp.severity == "block").any()
+        with st.container(border=True):
+            tag = "⛔ BLOCK" if is_open else "✅ ACCEPTED"
+            where = TABLE_LABEL.get(first.table, "Files") if first.table else "Files"
+            st.markdown(f"**{tag} · {t.title}** <span style='opacity:.7'>({where})</span>", unsafe_allow_html=True)
+            for m in grp.message:
+                st.write(m)
+            if t.what:
+                st.caption(t.what)
+            st.markdown(f"**Design impact:** {t.impact}")
+            if is_open:
+                c1, c2 = st.columns([1, 2])
+                asked = key in requested
+                if c1.button("Asked client to resend ✓" if asked else "Ask client to resend", key=f"req::{key}",
+                             help="Records the request (it appears in the data receipt); the block stays open."):
+                    requested.remove(key) if asked else requested.append(key)
+                    st.rerun()
+                with c2.expander("Accept anyway…"):
+                    why = st.text_input("Reason (required)", key=f"accwhy::{key}",
+                                        placeholder="e.g. client confirmed the extract is complete")
+                    if st.button("Confirm", key=f"accok::{key}", disabled=not why.strip()):
+                        accept[key] = {"reason": why.strip(), "at": dt.datetime.now().isoformat(timespec="seconds")}
+                        st.rerun()
+            else:
+                a = accept.get(key) or accept.get(first.code) or {}
+                st.markdown(f"Accepted: *{a.get('reason', '')}* ({a.get('at', '')})")
+                if st.button("Undo", key=f"accundo::{key}"):
+                    accept.pop(key, None)
+                    st.rerun()
+
+
+def coverage_panel(result) -> None:
+    c = result.coverage
+    with st.container(border=True):
+        st.markdown("**COVERAGE**")
+        if c is None or c.first is None:
+            st.info("No dated orders to show.")
+            return
+        st.markdown(f"{c.first:%b %d, %Y} → {c.last:%b %d, %Y} · {c.span_days:,} days, {c.days_with_rows:,} with orders")
+        st.markdown(f"<div style='color:inherit'>{sparkline_svg(c, height=60)}</div>", unsafe_allow_html=True)
+        st.caption("Order lines per day; shaded = days with no orders (darker = longer than a normal closure).")
+        for w in c.warnings:
+            st.warning(w, icon="⚠️")
+        st.markdown(f"**{c.lines:,}** lines · **{c.orders:,}** orders · **{c.skus:,}** SKUs · **{c.days_with_rows:,}** "
+                    f"days")
+
+
+def issue_list(df: pd.DataFrame) -> None:
+    for r in df.itertuples():
+        t = explain(r.code)
+        where = TABLE_LABEL.get(r.table, "Files") if r.table else "Files"
+        st.markdown(f"**{t.title}** ({where}): {r.message}")
+        if r.severity == "warn" and t.impact:
+            st.caption(f"Design impact: {t.impact}")
+
+
+@st.cache_resource(max_entries=4, show_spinner=False)
+def _line_profiles(key: str, _orders: pd.DataFrame) -> pd.DataFrame:
+    return pd.concat([order_profile(_orders, how) for how in LINE_DEFINITIONS], ignore_index=True)
+
+
+def details(result, key: str) -> None:
+    """The full detail views: tables, order lines, mapping, units, dates."""
+    t_tab, t_lines, t_map, t_units, t_dates = st.tabs(["Tables", "Order lines", "Column mapping", "Units", "Dates"])
+    with t_tab:
+        if not result.tables:
+            st.info("No tables were produced.")
+        else:
+            name = st.radio("Table", list(result.tables), horizontal=True, key="det::table",
+                            format_func=lambda t: TABLE_LABEL.get(t, t))
+            df = result.tables[name]
+            st.caption(f"{len(df):,} rows. First 1,000 shown.")
+            st.dataframe(df.head(1000), width="stretch", hide_index=True)
+    with t_lines:
+        st.markdown("What counts as an order line is **agreed with the client**; both definitions are shown.")
+        if "orders" in result.tables:
+            prof = _line_profiles(key, result.tables["orders"])
+            st.dataframe(prof[["channel", "definition", "orders", "lines", "lines_per_order", "units_per_line",
+                               "units_per_order", "picks_per_line"]], hide_index=True, width="stretch",
+                         column_config={c: st.column_config.NumberColumn(format="%.2f") for c in
+                                        ("lines_per_order", "units_per_line", "units_per_order", "picks_per_line")})
+    with t_map:
+        for table, m in result.mappings.items():
+            st.markdown(f"**{TABLE_LABEL.get(table, table)}** ← `{result.sources.get(table, '')}`")
+            st.dataframe(pd.DataFrame([dict(field=FIELD_LABEL.get(f.name, f.name), required="yes" if f.required else "",
+                                            column=m.mapping.get(f.name, "—"),
+                                            matched_by=m.method.get(f.name, "not found")) for f in TABLES[table]]),
+                         hide_index=True, width="stretch")
+    with t_units:
+        if len(result.units):
+            st.dataframe(result.units, hide_index=True, width="stretch")
+        else:
+            st.info("No sizes to check.")
+    with t_dates:
+        for table, col in [("orders", "order_date"), ("receipts", "receipt_date"), ("inventory", "snapshot_date")]:
+            if table in result.tables and col in result.tables[table] and result.tables[table][col].notna().any():
+                d = result.tables[table][col].value_counts().sort_index()
+                d = d.reindex(pd.date_range(d.index.min(), d.index.max()), fill_value=0)
+                st.markdown(f"**{TABLE_LABEL[table]}**: rows per day")
+                st.bar_chart(d.rename("rows"), height=180)

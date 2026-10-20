@@ -27,10 +27,17 @@ interactive HTML report.
     connections, SQL dumps, fixed-width reports.
   - `classify.py` guess the table each source holds (consultant confirms) · `mapping.py` auto-match + WMS profiles
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision
-  - `checks.py` issue record, gaps · `pipeline.py` ingest_table / ingest_sources / ingest_folder / write_outputs
+  - `checks.py` issue record, `ISSUE_TEXT` (title / plain meaning / design impact per code), accepting blocks, gaps
+  - `detect.py` per file / sheet: table guess, read-as, row count · `coverage.py` period covered, gaps, peak flag
+  - `pipeline.py` ingest_table / ingest_sources / ingest_folder / write_outputs
+  - `exports.py` rejects for the client, accepted blocks · `receipt.py` data receipt (HTML) ·
+    `request_template.py` data request (HTML / Excel) from the schema
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
-- `data/workspace/<client>/` — files dropped into the workbench (git-ignored, stays on the laptop)
+  - `app/ingest/` guided flow 1 Upload → 2 Confirm files → 3 Review → 4 Done (`state.py` session + files,
+    `widgets.py` shared pieces); dropped files go to a temp folder removed at Done
+- `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml`, `client.yaml`
+  (git-ignored; raw dropped files are not kept)
 - `tests/fixtures/` — frozen sample client (`sample_client/`, its WMS profile, expected findings) and
   Excel fixtures (.xls/.xlsb/.xlsm need Excel to make: `make_excel_fixtures.py`); see its README
 - `wms_profiles/` — saved column mappings per client WMS
@@ -61,7 +68,7 @@ the user inspect and play with it before starting the next module.
 pip install -e .[dev,app]
 python -m gtpfit.app                                                    # workbench, localhost:8501
 python -m gtpfit.ingest tests/fixtures/sample_client --wms tests/fixtures/sample_wms_profile.yaml   # -> FOLDER/_ingest
-python -m gtpfit.ingest FOLDER --accept excel_row_limit                         # accept a checked block
+python -m gtpfit.ingest FOLDER --accept "orders:excel_row_limit=client confirmed the extract"   # with a reason
 python -m pytest -q
 ```
 
@@ -78,5 +85,8 @@ python -m pytest -q
   are kept and counted (`blank_values`), not set aside: filling them is `quality/` and `backfill/`'s job.
   Guessing which table a file holds is looser (`schema.could_be`), so a size list lacking a case pack is
   still offered as an item master and ingest then names the missing column.
-- Ingest severities: `block` (refuse unless `accept=[code]`) · `warn` · `info`. Rows are never dropped
-  silently — they go to `rejects` with a reason.
+- Ingest severities: `block` (refuse unless accepted **with a reason**: `accept={"table:code": reason}`;
+  the reason goes to `accepted_blocks.csv` and the data receipt) · `warn` · `info`. Rows are never dropped
+  silently — they go to `rejects` with a reason. Every issue code needs an `ISSUE_TEXT` entry (a test checks).
+- Coverage: orders should span 12 months (`min_coverage_days`) and the peak months (`peak_months`); short or
+  peak-less history is a warning, not a block.
