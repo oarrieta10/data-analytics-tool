@@ -38,16 +38,16 @@ TABLES: dict[str, list[Field]] = {
                                              "part description")),
         Field("category", "text", False, ("category", "product category", "department", "item category")),
         Field("subcategory", "text", False, ("sub category", "subcategory", "class", "item class", "sub class")),
-        Field("unit_l", "length", False, ("unit length", "each length", "item length", "length", "ea length", "unit l",
+        Field("unit_l", "length", True, ("unit length", "each length", "item length", "length", "ea length", "unit l",
                                           "std unit length", "unit len"), "unit"),
-        Field("unit_w", "length", False, ("unit width", "each width", "item width", "width", "ea width", "unit w",
+        Field("unit_w", "length", True, ("unit width", "each width", "item width", "width", "ea width", "unit w",
                                           "std unit width", "unit wid"), "unit"),
-        Field("unit_h", "length", False, ("unit height", "each height", "item height", "height", "ea height", "unit h",
+        Field("unit_h", "length", True, ("unit height", "each height", "item height", "height", "ea height", "unit h",
                                           "std unit height", "unit hgt"), "unit"),
-        Field("unit_weight", "weight", False, ("unit weight", "each weight", "item weight", "weight",
+        Field("unit_weight", "weight", True, ("unit weight", "each weight", "item weight", "weight",
                                                "ea weight", "net weight", "std unit weight", "unit wt"),
               "unit"),
-        Field("case_qty", "count", False, ("case pack", "case qty", "case quantity", "units per case", "pack size",
+        Field("case_qty", "count", True, ("case pack", "case qty", "case quantity", "units per case", "pack size",
                                            "master pack qty", "inner pack", "case pack qty", "upc per case",
                                            "std case quantity", "std case qty", "qpc", "qty per case",
                                            "quantity per case"), None),
@@ -138,10 +138,24 @@ FIELD_HELP = {
 # Tables a study cannot run without; the others only warn when absent.
 REQUIRED_TABLES = ("item_master", "orders")
 
-# Besides its required fields, a file must map one of these to count as that
-# table: a bare SKU list is not an item master.
+# Required fields whose column must exist but whose blank values are kept, not set aside: an item
+# master with missing sizes or case packs is what quality/ and backfill/ work on.
+KEEP_BLANK = {"item_master": ("unit_l", "unit_w", "unit_h", "unit_weight", "case_qty")}
+
+# Guessing which table a file holds is looser than ingest's required fields: a SKU list with sizes but no
+# case pack is still an item master (ingest then asks for the missing column).  An item master needs a
+# SKU plus at least IDENTIFY_MIN of these; a bare SKU list is not one.
 IDENTIFY_BY = {"item_master": ("description", "category", "unit_l", "unit_w", "unit_h", "unit_weight",
                                "case_qty", "case_l", "case_w", "case_h", "case_weight")}
+IDENTIFY_MIN = 3
+
+
+def could_be(table: str, mapped) -> bool:
+    """Whether a file with these canonical fields mapped might hold this table (used to guess, not to ingest)."""
+    mapped = set(mapped)
+    if table in IDENTIFY_BY:
+        return "sku" in mapped and len(mapped & set(IDENTIFY_BY[table])) >= IDENTIFY_MIN
+    return all(f.name in mapped for f in TABLES[table] if f.required)
 
 
 def fields(table: str) -> list[Field]:

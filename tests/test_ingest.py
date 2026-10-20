@@ -423,8 +423,8 @@ def test_database_style_headers_map(table, headers, want):
 
 def test_unused_duplicate_columns_do_not_block(tmp_path):
     p = tmp_path / "joined.csv"
-    p.write_text("id,Item Number,Item Description,Unit Weight,id\n1,A1,Thing,1.5,9\n2,B2,Other,2.0,8\n",
-                 encoding="utf-8")
+    p.write_text("id,Item Number,Item Description,Unit Length,Unit Width,Unit Height,Unit Weight,Case Pack,id\n"
+                 "1,A1,Thing,5,4,3,1.5,12,9\n2,B2,Other,6,5,4,2.0,6,8\n", encoding="utf-8")
     r = ingest_table(p, "item_master")
     assert "duplicate_header" in {i.code for i in r.issues if i.severity == "info"}
     assert r.table is not None and list(r.table["sku"]) == ["A1", "B2"]
@@ -439,3 +439,71 @@ def test_two_generic_columns_are_not_high_confidence(tmp_path):
     p = tmp_path / "x.csv"
     p.write_text("partnumber,quantity,weight\nA1,3,1.2\n", encoding="utf-8")
     assert classify(p).confidence != "high"
+
+
+# ---- item master: unit dims, unit weight and case pack are required columns ---------------------
+
+ITEM_REQUIRED = ["sku", "unit_l", "unit_w", "unit_h", "unit_weight", "case_qty"]
+
+
+def test_item_master_required_fields():
+    from gtpfit.ingest.schema import TABLES
+    assert [f.name for f in TABLES["item_master"] if f.required] == ITEM_REQUIRED
+
+
+@pytest.mark.parametrize("drop,field", [("Unit Length", "unit_l"), ("Unit Width", "unit_w"),
+                                        ("Unit Height", "unit_h"), ("Unit Weight", "unit_weight"),
+                                        ("Case Pack", "case_qty")])
+def test_item_master_refused_without_a_required_column(ds, tmp_path, drop, field):
+    p = tmp_path / "im.csv"
+    _raw(ds, "item_master").drop(columns=[drop]).to_csv(p, index=False)
+    r = ingest_table(p, "item_master")
+    blocks = [i for i in r.issues if i.severity == "block"]
+    assert [i.code for i in blocks] == ["missing_required_column"]
+    assert field in blocks[0].message
+    assert r.table is None
+
+
+def test_blank_required_values_are_kept_and_reported(ds, tmp_path):
+    """The column is required; blank values in it are what quality/ and backfill/ are for, so rows stay."""
+    im = _raw(ds, "item_master")
+    im.loc[0:9, ["Unit Length", "Unit Width", "Unit Height"]] = ""
+    im.loc[10:19, "Unit Weight"] = ""
+    im.loc[20:24, "Case Pack"] = ""
+    im.loc[30, "Unit Length"] = "N/A"
+    p = tmp_path / "im.csv"
+    im.to_csv(p, index=False)
+    r = ingest_table(p, "item_master")
+    assert not [i for i in r.issues if i.severity == "block"]
+    assert len(r.table) == len(im) and len(r.rejects) == 0
+    blank = {i.field: i for i in r.issues if i.code == "blank_values"}
+    cols = {"unit_l": "Unit Length", "unit_w": "Unit Width", "unit_h": "Unit Height", "unit_weight": "Unit Weight",
+            "case_qty": "Case Pack"}
+    for fld, col in cols.items():
+        assert blank[fld].count == (im[col] == "").sum() and blank[fld].severity == "info", fld
+    bad = [i for i in r.issues if i.code == "unparseable_values" and i.field == "unit_l"]
+    assert bad and bad[0].severity == "warn" and bad[0].count == 1
+    assert pd.isna(r.table["unit_l"].iat[30])
+
+
+def test_blank_sku_still_sets_the_row_aside(ds, tmp_path):
+    im = _raw(ds, "item_master")
+    im.loc[40, "Item Number"] = ""
+    p = tmp_path / "im.csv"
+    im.to_csv(p, index=False)
+    r = ingest_table(p, "item_master")
+    assert len(r.rejects) == 1 and r.rejects["reason"].iat[0] == "missing_value"
+    assert len(r.table) == len(im) - 1
+
+
+def test_item_list_without_case_pack_is_guessed_then_asked_for_it(tmp_path):
+    """Guessing is looser than ingest: sizes and a SKU make it an item master; ingest then names what is missing."""
+    from gtpfit.ingest.classify import classify
+    p = tmp_path / "packaging.csv"
+    p.write_text("part_number,part_description,quantity,length,width,height,weight\nA1,Thing,1,5,4,3,1.2\n",
+                 encoding="utf-8")
+    g = classify(p)
+    assert g.table == "item_master" and g.confidence == "high"
+    r = ingest_table(p, "item_master")
+    blocks = [i for i in r.issues if i.severity == "block"]
+    assert [i.code for i in blocks] == ["missing_required_column"] and "case_qty" in blocks[0].message

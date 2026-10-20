@@ -3,8 +3,10 @@
     list_sources(paths) -> [Source]     every readable file, expanded into sheets / tables / zip members
     classify(source) -> Guess           best table (or None), confidence, ranking, matched fields
 
-A table qualifies when all its required fields match a column and (for the
-item master) at least one identifying field does too.  Among qualifying
+A table qualifies when all its required fields match a column; the item master,
+whose required fields ingest insists on, only needs a SKU plus three sizes /
+descriptions here (schema.could_be), so a list lacking a case pack is still
+guessed and ingest then names the missing column.  Among qualifying
 tables a dated transaction log (orders, receipts) beats an item list, then
 more matched fields wins.  The guess is only a starting
 point: the consultant confirms or changes it before ingest runs.
@@ -17,7 +19,7 @@ from pathlib import Path
 from .mapping import suggest_mapping
 from .params import IngestParams
 from .readers import DATA_EXT, Source, UnsupportedFileError, as_source, detect_format, headers, parts
-from .schema import IDENTIFY_BY, TABLES
+from .schema import TABLES, could_be
 
 TRANSACTIONS = ("orders", "receipts")  # their required date makes them a stronger signal than column counts
 HIGH_MIN_FIELDS = 3  # "high" needs at least this many matched fields (sku + a generic "quantity" is not enough)
@@ -47,8 +49,7 @@ def classify(source, params: IngestParams | None = None) -> Guess:
     ranking, ok = [], {}
     for table, flds in TABLES.items():
         m = suggest_mapping(hdr, table, params)
-        ident = IDENTIFY_BY.get(table)
-        ok[table] = not m.missing_required and (not ident or any(f in m.mapping for f in ident))
+        ok[table] = could_be(table, m.mapping)
         ranking.append((table, round(len(m.mapping) / len(flds), 3) if ok[table] else 0.0, list(m.mapping)))
     # qualifying first; a dated transaction log beats a list of items; then more matched fields
     ranking.sort(key=lambda r: (ok[r[0]], ok[r[0]] and r[0] in TRANSACTIONS, len(r[2]) if ok[r[0]] else 0, r[1]),

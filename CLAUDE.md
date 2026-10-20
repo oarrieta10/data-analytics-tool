@@ -73,5 +73,10 @@ python -m pytest -q
 - **What counts as an order line is a per-client choice** (`gtpfit/lines.py`: `row` = every file row,
   `order_sku` = repeated order + SKU rows merged; `picks` keeps the row count). Ingest never merges rows;
   analysis modules take `line_definition` as a parameter and the report states which one was used.
+- **Item master required columns:** SKU, unit length / width / height, unit weight and case quantity
+  (`schema.py`, `required=True`). A file without one is refused, but blank values inside those columns
+  are kept and counted (`blank_values`), not set aside: filling them is `quality/` and `backfill/`'s job.
+  Guessing which table a file holds is looser (`schema.could_be`), so a size list lacking a case pack is
+  still offered as an item master and ingest then names the missing column.
 - Ingest severities: `block` (refuse unless `accept=[code]`) · `warn` · `info`. Rows are never dropped
   silently — they go to `rejects` with a reason.

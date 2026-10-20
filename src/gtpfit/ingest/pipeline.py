@@ -28,7 +28,7 @@ from .params import IngestParams
 from .classify import classify, list_sources
 from .read import read_headers, read_raw
 from .readers import Source, as_source
-from .schema import REQUIRED_TABLES, TABLES
+from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 
 _DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
@@ -188,6 +188,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
         if f.name not in m.mapping:
             continue
         col = df[m.mapping[f.name]]
+        blank_ok = f.name in KEEP_BLANK.get(table, ())  # required column, but blank values are kept
         if f.kind == "id":
             vals, changed = coerce.normalise_ids(col, upper=params.upper_case_skus and f.name == "sku")
             if f.name == "sku" and changed:
@@ -200,7 +201,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
             num, failed = coerce.to_number(col)
             if failed.any():
                 ex = col[failed].drop_duplicates().head(3).tolist()
-                if f.required:
+                if f.required and not blank_ok:
                     reject(failed, "unparseable", f.name)
                 else:
                     add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not numbers "
@@ -250,7 +251,12 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
                 add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not times; left blank.",
                     count=failed.sum(), share=failed.mean(), fld=f.name)
             out[f.name] = secs
-        if f.required:
+        if f.required and blank_ok:
+            n_blank = int(col.isna().sum())
+            if n_blank:
+                add("blank_values", "info", f"{n_blank:,} rows ({n_blank / n_rows:.1%}) have no {f.name}; kept, "
+                    "not set aside.", count=n_blank, share=n_blank / n_rows, fld=f.name)
+        elif f.required:
             blank = col.isna() & ~has_cases if (f.kind == "qty" and has_cases is not None) else col.isna()
             reject(blank, "missing_value", f.name)
 

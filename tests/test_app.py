@@ -99,4 +99,7 @@ def test_ingest_page_shows_column_tabs(tmp_path, monkeypatch):
     assert len(col_tables) == 4
     orders = next(t for t in col_tables if "order_date" in set(t["Field"])).set_index("Field")
     assert orders.loc["order_date", "Column"].startswith("Order Date · ")  # with example values
+    items = next(t for t in col_tables if "unit_weight" in set(t["Field"])).set_index("Field")
+    assert {f for f in items.index if items.loc[f, "Required"] == "yes"} == {
+        "sku", "unit_l", "unit_w", "unit_h", "unit_weight", "case_qty"}
     assert not [w for w in at.warning if "Required" in w.value]
