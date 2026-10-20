@@ -15,6 +15,8 @@ import pytest
 pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from gtpfit.ingest.coverage import coverage  # noqa: E402
+
 SAMPLE = Path(__file__).resolve().parent / "fixtures" / "sample_client"  # frozen sample client
 FILES = ("item_master.csv", "orders.csv", "receipts.csv", "inventory_snapshots.csv")
 INGEST = """
@@ -178,7 +180,7 @@ def test_block_needs_reasoned_acceptance(tmp_path, monkeypatch):
     o["_d"] = pd.to_datetime(o["Order Date"], format="%m/%d/%Y")
     clipped = o.sort_values("_d", kind="stable").head(6000).drop(columns="_d")
     folder = _copy(tmp_path / "client", orders=clipped)
-    at = _app(tmp_path, monkeypatch, folder=folder, **{"thr::excel_row_limits": "6000"})
+    at = _app(tmp_path, monkeypatch, folder=folder, **{"ds::excel_row_limits": "6000"})
     at = _next(at, "ing::run")
     assert _step(at) == 3
     assert any("BLOCKED" in e.value for e in at.error)
@@ -339,49 +341,58 @@ def test_remember_synonym_teaches_automatic_matching(tmp_path, monkeypatch, lear
     assert not at.button(key="ing::run").disabled
 
 
-# ---- client settings on Confirm ------------------------------------------------------------------------
+# ---- client settings and detection settings on Confirm --------------------------------------------------
 
-def test_assortment_presets_set_the_three_bands():
-    import dataclasses
-    from gtpfit.app.ingest.state import default_settings, settings_params
-    from gtpfit.ingest import IngestParams
-    from gtpfit.ingest.params import ASSORTMENTS, DEFAULT_ASSORTMENT, assortment_bands
-    bands = ("unit_longest_side_in", "case_longest_side_in", "density_lb_ft3")
-    assert set(ASSORTMENTS) == {"consumer goods", "industrial", "grocery"}
-    d = dataclasses.asdict(IngestParams())
-    assert {k: d[k] for k in bands} == ASSORTMENTS[DEFAULT_ASSORTMENT]  # the defaults are the consumer preset
-    for name, preset in ASSORTMENTS.items():
-        assert set(preset) == set(bands)
-        p = settings_params({**default_settings(), "assortment": name})
-        assert {k: p[k] for k in bands} == preset
-        IngestParams(**p)  # a valid parameter set
-    assert ASSORTMENTS["industrial"]["density_lb_ft3"][1] > ASSORTMENTS["consumer goods"]["density_lb_ft3"][1]
-    with pytest.raises(ValueError):
-        assortment_bands("furniture")
+def _keys(at) -> list:
+    """Every widget key on the page."""
+    kinds = ("multiselect", "number_input", "text_input", "toggle", "selectbox", "radio", "checkbox")
+    return [w.key for k in kinds for w in at.get(k) if getattr(w, "key", None)]
 
 
 def test_settings_map_onto_params():
     from gtpfit.app.ingest.state import default_settings, settings_params
+    from gtpfit.ingest import IngestParams
     s = {**default_settings(), "peak_months": [8, 9], "max_gap_days_orders": 7, "max_bad_row_share": 0.05,
-         "upper_case_skus": False}
-    p = settings_params(s, engine={"max_gap_days": {"receipts": 10}, "fuzzy_header_cutoff": 0.9})
-    assert p["peak_months"] == (8, 9) and p["max_gap_days"] == {"orders": 7, "receipts": 10}
-    assert p["max_bad_row_share"] == 0.05 and p["upper_case_skus"] is False and p["fuzzy_header_cutoff"] == 0.9
+         "upper_case_skus": False, "max_gap_days_receipts": 10, "fuzzy_header_cutoff": 0.9,
+         "excel_row_limits": [6000], "assortment": "industrial"}
+    p = settings_params(s)
+    assert p["peak_months"] == (8, 9) and p["excel_row_limits"] == (6000,)
+    assert p["max_gap_days_orders"] == 7 and p["max_gap_days_receipts"] == 10 and p["fuzzy_header_cutoff"] == 0.9
+    assert p["max_bad_row_share"] == 0.05 and p["upper_case_skus"] is False
+    assert p["density_lb_ft3"] == (4.0, 150.0)
+    params = IngestParams(**p)
+    assert params.gap_limit("orders") == 7 and params.gap_limit("receipts") == 10 and params.gap_limit("x") is None
 
 
-def test_confirm_shows_only_client_settings(tmp_path, monkeypatch):
+def test_every_field_appears_in_exactly_one_block(tmp_path, monkeypatch):
+    import dataclasses
+    from gtpfit.ingest import IngestParams
+    from gtpfit.ingest.params import meta
     at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
-    assert at.multiselect(key="cs::peak_months").value == [11, 12]
-    assert at.number_input(key="cs::max_gap_days_orders").value == 4
-    assert at.number_input(key="cs::max_bad_row_share").value == 1.0  # percent
-    assert at.selectbox(key="cs::assortment").options == ["consumer goods", "industrial", "grocery"]
-    assert at.toggle(key="cs::case_sensitive").value is False
+    keys = _keys(at)
+    assert len(keys) == len(set(keys))
+    for f in dataclasses.fields(IngestParams):
+        m = meta(f.name)
+        if m.get("via") == "assortment":  # drawn through the preset, not alone
+            assert "cs::assortment" in keys and f"cs::{f.name}" not in keys and f"ds::{f.name}" not in keys
+            continue
+        want, other = ("cs", "ds") if m["block"] == "client" else ("ds", "cs")
+        assert keys.count(f"{want}::{f.name}") == 1 and f"{other}::{f.name}" not in keys, f.name
+    assert "cs::line_definition" in keys
+    # the three band ranges are never separate controls
     labels = [n.label.lower() for n in at.number_input]
-    assert not [x for x in labels if "density" in x or "longest side" in x]  # the bands come from the preset
+    assert not [x for x in labels if "density" in x or "longest side" in x]
+    # every setting has a tooltip
+    for k in (k for k in keys if k.startswith(("cs::", "ds::"))):
+        w = next(w for kind in ("multiselect", "number_input", "text_input", "toggle", "selectbox", "radio")
+                 for w in at.get(kind) if getattr(w, "key", None) == k)
+        assert (w.help or "").strip(), k
     assert at.radio(key="cs::line_definition").options == ["row", "order_sku"]
-    assert any(e.label.startswith("Engine settings") for e in at.expander)
+    assert at.toggle(key="cs::upper_case_skus").value is False  # "SKUs are case-sensitive": off by default
+    exp = next(e for e in at.expander if e.label.startswith("Detection settings"))
+    assert exp.label == "Detection settings"  # nothing changed yet
+    assert "Defaults suit most clients." in " ".join(c.value for c in at.caption)
     assert "all defaults" in " ".join(m.value for m in at.markdown)
-    assert at.button(key="cs::reset").disabled
 
 
 def test_client_settings_persist_per_client_and_reset(tmp_path, monkeypatch):
@@ -409,10 +420,30 @@ def test_client_settings_persist_per_client_and_reset(tmp_path, monkeypatch):
     assert yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))["settings"] == {}
 
 
+def test_detection_settings_count_and_reset(tmp_path, monkeypatch):
+    import yaml
+    folder = _copy(tmp_path / "client")
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.multiselect(key="cs::peak_months").set_value([12]).run()  # a client setting, kept by the detection Reset
+    assert at.button(key="ds::reset").disabled
+    at.number_input(key="ds::fuzzy_header_cutoff").set_value(0.9).run()
+    at.text_input(key="ds::excel_row_limits").input("6000").run()
+    assert not at.exception, at.exception
+    assert next(e for e in at.expander if e.label.startswith("Detection settings")).label == \
+        "Detection settings (2 changed)"
+    saved = yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))["settings"]
+    assert saved["fuzzy_header_cutoff"] == 0.9 and saved["excel_row_limits"] == [6000]
+    at = _next(at, "ds::reset")
+    assert next(e for e in at.expander if e.label.startswith("Detection settings")).label == "Detection settings"
+    assert at.number_input(key="ds::fuzzy_header_cutoff").value == 0.86
+    assert at.multiselect(key="cs::peak_months").value == [12]
+    assert yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))["settings"] == \
+        {"peak_months": [12]}
+
+
 def test_peak_months_change_the_coverage_warning(tmp_path, monkeypatch):
     # the sample client's orders run Dec 2024 to Apr 2025: no November
     from gtpfit.ingest import IngestParams
-    from gtpfit.ingest.coverage import coverage
     o = pd.DataFrame({"order_date": pd.to_datetime(["2024-12-15", "2025-04-13"]), "order_id": ["a", "b"],
                       "sku": ["x", "y"], "qty": [1, 1]})
     assert any("No orders in Nov" in w for w in coverage(o, IngestParams()).warnings)
@@ -425,6 +456,24 @@ def test_peak_months_change_the_coverage_warning(tmp_path, monkeypatch):
     at = _next(at, "ing::run")
     text = " ".join(w.value for w in at.warning)
     assert "No orders in Jun, Jul" in text and "No orders in Nov" not in text
+
+
+def test_peak_hint_on_confirm(tmp_path, monkeypatch):
+    # the sample client covers five months: no suggestion
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
+    assert "not enough history to suggest" in " ".join(c.value for c in at.caption)
+    # a full year peaking in May, with peak months left at Nov-Dec: the hint and the note
+    days = pd.date_range("2025-01-01", "2025-12-31")
+    o = pd.read_csv(SAMPLE / "orders.csv", dtype=str)
+    rows = [o.iloc[i % len(o)].to_dict() | {"Order Date": d.strftime("%m/%d/%Y")}
+            for i, d in enumerate(x for x in days for _ in range(3 if x.month == 5 else 1))]
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "year", orders=pd.DataFrame(rows)), client="Beta")
+    captions = " ".join(c.value for c in at.caption)
+    assert "Busiest months in this data: May (3.0×)." in captions
+    assert at.multiselect(key="cs::peak_months").value == [11, 12]  # a hint only: never applied
+    assert "Worth asking the client" in " ".join(m.value for m in at.markdown)
+    at.multiselect(key="cs::peak_months").set_value([5]).run()
+    assert "Worth asking the client" not in " ".join(m.value for m in at.markdown)
 
 
 def test_line_definition_recorded_in_receipt(tmp_path, monkeypatch):

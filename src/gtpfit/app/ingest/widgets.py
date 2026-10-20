@@ -1,20 +1,19 @@
-"""widgets.py — pieces shared by the Ingest steps: stepper, header, client settings, verdict, block cards,
+"""widgets.py — pieces shared by the Ingest steps: stepper, header, client and detection settings, verdict, block cards,
 coverage strip and the detail tabs.  Issue wording comes from gtpfit.ingest.checks.ISSUE_TEXT."""
 from __future__ import annotations
 
 import calendar
-import dataclasses
 import datetime as dt
 
 import pandas as pd
 import streamlit as st
 
-from gtpfit.ingest import IngestParams
 from gtpfit.ingest.checks import explain
 from gtpfit.ingest.coverage import sparkline_svg
-from gtpfit.ingest.params import ASSORTMENTS
+from gtpfit.ingest.coverage import OUTSIDE_NOTE
+from gtpfit.ingest.params import ASSORTMENTS, assortment_tooltip, format_value, meta, tooltip
 from gtpfit.ingest.schema import FIELD_LABEL, TABLE_LABEL, TABLES
-from gtpfit.lines import LINE_DEFINITIONS, order_profile
+from gtpfit.lines import LINE_DEFINITION_HELP, LINE_DEFINITIONS, order_profile
 
 from . import state
 
@@ -54,107 +53,117 @@ def header(editable: bool) -> None:
 
 def _bands_text(name: str) -> str:
     b = ASSORTMENTS[name]
-    u, c, d = b["unit_longest_side_in"], b["case_longest_side_in"], b["density_lb_ft3"]
-    return f"unit {u[0]:g}–{u[1]:g} in, case {c[0]:g}–{c[1]:g} in, {d[0]:g}–{d[1]:g} lb/ft³"
+    return ", ".join(f"{meta(k)['label'].split(' (')[0].lower()} {format_value(b[k], meta(k)['unit'])}"
+                     for k in state.BAND_FIELDS)
 
 
-def client_settings() -> None:
-    """'Client settings' on Confirm: the few choices that differ by client, saved to its client.yaml, plus a
-    collapsed 'Engine settings' with every other IngestParams field (this session only).  Shows how many
-    values differ from the defaults, with a Reset."""
-    base, saved = state.default_settings(), state.client_settings()
-    cur = st.session_state.get("ing::settings") or saved
+def control(name: str, value, key: str):
+    """One IngestParams field as a widget, drawn from its metadata (label, unit, range) with its tooltip."""
+    m = meta(name)
+    label, unit, tip = m["label"], m["unit"], tooltip(name)
+    if unit == "months":
+        return sorted(st.multiselect(label, list(range(1, 13)), default=list(value), key=key, help=tip,
+                                     format_func=lambda x: calendar.month_name[x]))
+    if unit == "bool":
+        shown = st.toggle(label, value=(not value) if m.get("invert") else bool(value), key=key, help=tip)
+        return (not shown) if m.get("invert") else shown
+    if unit == "rows":
+        txt = st.text_input(label + " (comma-separated)", ", ".join(str(x) for x in value), key=key, help=tip)
+        return [int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit()]
+    if unit == "share":
+        pct = st.number_input(label + " (%)", min_value=m["lo"] * 100, max_value=m["hi"] * 100,
+                              value=float(value) * 100, step=m["step"] * 100, format="%.1f", key=key, help=tip)
+        return round(pct / 100, 6)
+    if unit == "days":
+        return int(st.number_input(label, min_value=m["lo"], max_value=m["hi"], value=int(value), step=m["step"],
+                                   key=key, help=tip))
+    return float(st.number_input(label, min_value=float(m["lo"]), max_value=float(m["hi"]), value=float(value),
+                                 step=float(m["step"]), format="%.2f", key=key, help=tip))
+
+
+def _save(new: dict) -> None:
+    if new != state.client_settings():
+        state.save_client_settings(new)
+    st.session_state["ing::settings"] = new
+
+
+def _reset(prefix: str, keys) -> None:
+    for k in [k for k in st.session_state.keys() if str(k).startswith(prefix)]:
+        del st.session_state[k]
+    base = state.default_settings()
+    _save({**state.settings(), **{k: base[k] for k in keys}})
+    st.rerun()
+
+
+def client_settings(hint=None) -> None:
+    """'Client settings' on Confirm, always shown and saved for the client: the fields whose metadata says
+    block="client" (the unit bands through the assortment preset), plus the line definition.  hint: the
+    busiest-months PeakHint for the confirmed orders, or a message when there is none."""
+    cur = dict(state.settings())
+    keys = list(state.CLIENT_FIELDS) + list(state.EXTRA_SETTINGS)
+    new = dict(cur)
     with st.container(border=True):
         top = st.container()
-        new = {}
         a, b = st.columns(2)
         with a:
-            new["peak_months"] = sorted(st.multiselect(
-                "Peak months", list(range(1, 13)), default=list(cur["peak_months"]), key="cs::peak_months",
-                format_func=lambda m: calendar.month_name[m]))
-            st.caption("Orders must include these months, or the design day misses the busiest season.")
-            new["max_gap_days_orders"] = int(st.number_input(
-                "Longest tolerated gap in orders (days)", min_value=0, value=int(cur["max_gap_days_orders"]),
-                step=1, key="cs::max_gap_days_orders"))
-            st.caption("A longer run of days with no orders is a missing slice of the extract, not a closure.")
-            pct = st.number_input("Share of unusable rows before a table is refused (%)", min_value=0.0,
-                                  max_value=100.0, value=float(cur["max_bad_row_share"]) * 100, step=0.5,
-                                  format="%.1f", key="cs::max_bad_row_share")
-            new["max_bad_row_share"] = round(pct / 100, 6)
-            st.caption("Above this, too many rows are set aside to trust the volumes.")
+            for name in state.CLIENT_FIELDS:
+                if name == "upper_case_skus":
+                    continue  # drawn beside the assortment
+                new[name] = control(name, cur[name], f"cs::{name}")
+                if name == "peak_months":
+                    _peak_hint(hint, new[name])
         with b:
             names = list(ASSORTMENTS)
             new["assortment"] = st.selectbox("Assortment type", names, index=names.index(cur["assortment"])
-                                             if cur["assortment"] in names else 0, key="cs::assortment")
-            st.caption(f"Sets the ranges used to check units: {_bands_text(new['assortment'])}.")
-            new["upper_case_skus"] = not st.toggle("SKUs are case-sensitive", value=not cur["upper_case_skus"],
-                                                   key="cs::case_sensitive")
-            st.caption("Off: “ab-1” and “AB-1” are one SKU. On: they stay separate SKUs.")
+                                             if cur["assortment"] in names else 0, key="cs::assortment",
+                                             help=assortment_tooltip())
+            st.caption(f"Checks units against: {_bands_text(new['assortment'])}.")
+            new["upper_case_skus"] = control("upper_case_skus", cur["upper_case_skus"], "cs::upper_case_skus")
             defs = list(LINE_DEFINITIONS)
             new["line_definition"] = st.radio("What counts as an order line", defs,
                                               index=defs.index(cur["line_definition"]), key="cs::line_definition",
-                                              captions=[LINE_DEFINITIONS[d] for d in defs])
-            st.caption("Agreed with the client; it changes lines per order and pick counts downstream.")
-        engine = _engine_settings()
-        if new != saved:
-            state.save_client_settings(new)
-        st.session_state["ing::settings"] = new
-        n = sum(new[k] != base[k] for k in base) + len(engine)
+                                              captions=[LINE_DEFINITIONS[d] for d in defs],
+                                              help=LINE_DEFINITION_HELP)
+        _save(new)
+        n = len(state.changed(new, keys))
         c1, c2 = top.columns([5, 1.3], vertical_alignment="center")
         c1.markdown("**Client settings**" + (f" · {n} differ from defaults" if n else " · all defaults"))
         if c2.button("Reset to defaults", key="cs::reset", disabled=not n):
-            for k in [k for k in st.session_state.keys() if str(k).startswith(("cs::", "thr::"))]:
-                del st.session_state[k]
-            st.session_state["ing::settings"], st.session_state["ing::engine"] = base, {}
-            state.save_client_settings(base)
-            st.rerun()
-        top.caption(f"Saved for {state.client()} and used every time.")
+            _reset("cs::", keys)
+        top.caption(f"Saved for {state.client()} and used every time. Hover a setting for what it does.")
 
 
-def _engine_settings() -> dict:
-    """Every IngestParams field the client settings don't cover, collapsed; returns only the changed ones."""
-    base = dataclasses.asdict(IngestParams())
-    cur = {**base, **(st.session_state.get("ing::engine") or {})}
-    new = {}
-    with st.expander("Engine settings (rarely needed)"):
-        st.caption("This session only. Each default and its source is in gtpfit/ingest/params.py.")
-        for name, v in base.items():
-            if name in state.CLIENT_FIELDS:
-                continue
-            label = name.replace("_", " ")
-            key = f"thr::{name}"
-            val = cur.get(name, v)
-            if name == "max_gap_days":  # the orders gap is a client setting
-                v = {k: x for k, x in v.items() if k != "orders"}
-            if name == "excel_row_limits":
-                txt = st.text_input(label, ", ".join(str(x) for x in val), key=key,
-                                    help="Row counts that mean a clipped export.")
-                new[name] = tuple(int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit())
-            elif isinstance(v, bool):
-                new[name] = st.checkbox(label, val, key=key)
-            elif isinstance(v, int):
-                new[name] = int(st.number_input(label, value=int(val), step=1, key=key))
-            elif isinstance(v, float):
-                new[name] = float(st.number_input(label, value=float(val), format="%.4f", step=v / 10 or 0.01, key=key))
-            elif isinstance(v, dict):
-                new[name] = {k: int(st.number_input(f"{label}: {k}", value=int(val.get(k, x)), step=1,
-                                                    key=f"{key}::{k}")) for k, x in v.items()}
-            elif isinstance(v, tuple) and len(v) == 2:
-                a, b = st.columns(2)
-                new[name] = (float(a.number_input(f"{label}: low", value=float(val[0]), key=f"{key}::lo")),
-                             float(b.number_input(f"{label}: high", value=float(val[1]), key=f"{key}::hi")))
-            else:
-                new[name] = val
-    if "max_gap_days" in new:
-        new["max_gap_days"] = {**base["max_gap_days"], **new["max_gap_days"]}
-    changed = {k: x for k, x in new.items() if not json_eq(x, base[k])}
-    st.session_state["ing::engine"] = changed
-    return changed
+def _peak_hint(hint, peak) -> None:
+    """The busiest-months hint under Peak months; the outside note is judged against the months set now."""
+    if hint is None:
+        return
+    if isinstance(hint, str):
+        st.caption(hint)
+        return
+    st.caption(hint.text + " A hint only: it does not change the peak months.")
+    if hint.months and not set(hint.months) & set(peak):
+        st.markdown(f":orange[{OUTSIDE_NOTE}]")
 
 
-def json_eq(a, b) -> bool:
-    norm = lambda x: list(x) if isinstance(x, tuple) else x
-    return norm(a) == norm(b)
+def detection_settings() -> None:
+    """'Detection settings', collapsed: the fields whose metadata says block="detection", saved for the client,
+    with how many differ from the defaults and a Reset."""
+    cur = dict(state.settings())
+    keys = list(state.DETECTION_FIELDS)
+    n_before = len(state.changed(cur, keys))
+    new = dict(cur)
+    with st.expander("Detection settings" + (f" ({n_before} changed)" if n_before else "")):
+        top = st.container()
+        for name in keys:
+            new[name] = control(name, cur[name], f"ds::{name}")
+        _save(new)
+        n = len(state.changed(new, keys))
+        if n != n_before:
+            st.rerun()  # an expander's label is drawn before its contents: redraw it with the new count
+        c1, c2 = top.columns([5, 1.3], vertical_alignment="center")
+        c1.caption("Defaults suit most clients." + (f" {n} differ from defaults." if n else ""))
+        if c2.button("Reset to defaults", key="ds::reset", disabled=not n):
+            _reset("ds::", keys)
 
 
 # ---- review pieces ---------------------------------------------------------------------------

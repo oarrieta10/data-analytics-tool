@@ -6,9 +6,9 @@ or one of the client's recent folders, and read in place: nothing is copied and
 nothing is written into it.  data/workspace/<client>/ keeps _ingest/ outputs,
 the client's remembered mapping (wms_<client>.yaml) and client.yaml (recent
 folders, client settings; also how recent clients are listed).  Client settings
-(peak months, gap and bad-row limits, assortment, SKU case, line definition)
-are saved per client; engine settings (every other IngestParams field) last
-for the session only.
+(always shown) and detection settings (collapsed) are both saved per client,
+only where they differ from the defaults; which field goes where comes from
+IngestParams' metadata.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from gtpfit.app import ROOT
 from gtpfit.ingest import IngestParams, Source, ingest_sources, load_wms_profile, parse_wms_profile, save_wms_profile
 from gtpfit.ingest.mapping import WmsProfile
 from gtpfit.ingest.detect import detect
-from gtpfit.ingest.params import ASSORTMENTS, DEFAULT_ASSORTMENT, assortment_bands
+from gtpfit.ingest.params import DEFAULT_ASSORTMENT, assortment_bands, block_fields, meta
 from gtpfit.ingest.schema import TABLE_LABEL
 
 WORKSPACE = Path(os.environ.get("GTPFIT_WORKSPACE", ROOT / "data" / "workspace"))  # env: tests
@@ -252,17 +252,22 @@ def run_profile_text(overrides: dict | None = None) -> str | None:
     return yaml.safe_dump(d, sort_keys=False, allow_unicode=True) if len(d) > 1 else None
 
 
-# ---- settings: client settings (saved per client) over engine settings (this session only) -----------
+# ---- settings: client and detection settings, saved per client ----------------------------------------
 
-# IngestParams fields the client settings decide; every other field is an engine setting.
-CLIENT_FIELDS = ("peak_months", "max_bad_row_share", "upper_case_skus", *ASSORTMENTS[DEFAULT_ASSORTMENT])
+# Which IngestParams field shows where comes from its metadata (gtpfit.ingest.params.setting).
+CLIENT_FIELDS = tuple(f for f in block_fields("client") if not meta(f).get("via"))  # drawn one by one
+BAND_FIELDS = tuple(f for f in block_fields("client") if meta(f).get("via") == "assortment")
+DETECTION_FIELDS = tuple(block_fields("detection"))
+EXTRA_SETTINGS = {"assortment": DEFAULT_ASSORTMENT, "line_definition": "row"}  # client settings, not params
+
+
+def _plain(v):
+    return list(v) if isinstance(v, tuple) else v
 
 
 def default_settings() -> dict:
-    p = IngestParams()
-    return dict(peak_months=list(p.peak_months), max_gap_days_orders=int(p.max_gap_days["orders"]),
-                max_bad_row_share=float(p.max_bad_row_share), assortment=DEFAULT_ASSORTMENT,
-                upper_case_skus=bool(p.upper_case_skus), line_definition="row")
+    d = dataclasses.asdict(IngestParams())
+    return {**{k: _plain(d[k]) for k in CLIENT_FIELDS + DETECTION_FIELDS}, **EXTRA_SETTINGS}
 
 
 def client_settings(name: str | None = None) -> dict:
@@ -278,25 +283,28 @@ def client_settings(name: str | None = None) -> dict:
 def save_client_settings(settings: dict, name: str | None = None) -> None:
     """Save only the values that differ from the defaults, so a later change of default still reaches the client."""
     base = default_settings()
-    write_client_yaml(name or client(), settings={k: v for k, v in settings.items() if k in base and v != base[k]})
+    write_client_yaml(name or client(), settings={k: _plain(v) for k, v in settings.items()
+                                                  if k in base and _plain(v) != base[k]})
 
 
-def settings_params(settings: dict, engine: dict | None = None) -> dict:
-    """IngestParams (as a dict) from the client settings, over any engine-setting overrides."""
-    base = dataclasses.asdict(IngestParams())
-    engine = engine or {}
-    d = {**base, **engine}
-    d["peak_months"] = tuple(sorted(int(m) for m in settings["peak_months"]))
-    d["max_gap_days"] = {**base["max_gap_days"], **(engine.get("max_gap_days") or {}),
-                         "orders": int(settings["max_gap_days_orders"])}
-    d["max_bad_row_share"] = float(settings["max_bad_row_share"])
-    d["upper_case_skus"] = bool(settings["upper_case_skus"])
-    d.update(assortment_bands(settings["assortment"]))
+def changed(settings: dict, keys) -> list[str]:
+    base = default_settings()
+    return [k for k in keys if _plain(settings.get(k, base[k])) != base[k]]
+
+
+def settings_params(settings: dict) -> dict:
+    """IngestParams (as a dict) from the settings: each field as set, the bands from the assortment."""
+    d = dataclasses.asdict(IngestParams())
+    for k in CLIENT_FIELDS + DETECTION_FIELDS:
+        if k in settings:
+            d[k] = tuple(settings[k]) if isinstance(settings[k], list) else settings[k]
+    d["peak_months"] = tuple(sorted(int(m) for m in d["peak_months"]))
+    d.update(assortment_bands(settings.get("assortment", DEFAULT_ASSORTMENT)))
     return d
 
 
 def settings() -> dict:
-    """This run's client settings: edited on Confirm this session, else the client's saved ones."""
+    """This run's settings: edited on Confirm this session, else the client's saved ones."""
     return ss().get("ing::settings") or client_settings()
 
 
@@ -313,7 +321,7 @@ def params_from_json(s: str) -> dict:
 
 
 def params() -> dict:
-    return settings_params(settings(), ss().get("ing::engine"))
+    return settings_params(settings())
 
 
 def params_json() -> str:

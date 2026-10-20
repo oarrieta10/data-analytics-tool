@@ -2,11 +2,19 @@
 
     coverage(orders, params) -> Coverage
     sparkline_svg(cov, width, height) -> inline SVG of lines per day, gap days shaded
+    busiest_months(dates, peak_months, ratio) -> PeakHint: the months that stand out in the data
 
 A design year needs about 12 months (params.min_coverage_days) and the
 client's peak months (params.peak_months).  Lines here are file rows; the
 order-line definition (gtpfit.lines) is applied later by the profile module.
 Works on the canonical orders table (order_date, order_id, sku, qty).
+
+The busiest-months hint is only a hint: it never sets peak_months and the
+coverage check does not use it.  Each year-month's rows are divided by the
+calendar days of that month the history covers (so a partial first or last
+month, or February, does not look quiet), each calendar month is averaged
+across years, and a month is named when it is at least `ratio` times the
+median of the twelve.  It needs all twelve calendar months.
 """
 from __future__ import annotations
 
@@ -93,3 +101,43 @@ def sparkline_svg(cov: Coverage, width: int = 640, height: int = 64, long_gap_da
             f'{"".join(shades)}'
             f'<polyline points="0,{height} {pts} {width},{height}" fill="currentColor" opacity="0.18" stroke="none"/>'
             f'<polyline points="{pts}" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.9"/></svg>')
+
+
+OUTSIDE_NOTE = "Busiest month is outside the peak months you set. Worth asking the client."
+
+
+@dataclass
+class PeakHint:
+    enough: bool                                  # all 12 calendar months have orders
+    months: tuple = ()                            # hinted months, calendar order
+    ratios: dict = field(default_factory=dict)    # month -> lines per day / median month
+    monthly: pd.Series | None = None              # month 1-12 -> mean lines per covered day
+    outside: bool = False                         # months hinted and none of them in peak_months
+
+    @property
+    def text(self) -> str:
+        if not self.enough:
+            return "Busiest months in this data: not enough history to suggest (needs all 12 months)."
+        if not self.months:
+            return "Busiest months in this data: no month stands out."
+        return "Busiest months in this data: " + ", ".join(
+            f"{calendar.month_abbr[m]} ({self.ratios[m]:.1f}×)" for m in self.months) + "."
+
+
+def busiest_months(dates, peak_months=(), ratio: float | None = None) -> PeakHint:
+    """Months whose order lines per day are at least `ratio` x the median month (see the module docstring)."""
+    ratio = IngestParams().peak_hint_ratio if ratio is None else ratio
+    d = pd.to_datetime(pd.Series(dates), errors="coerce").dropna().dt.normalize()
+    if d.empty or d.dt.month.nunique() < 12:
+        return PeakHint(False)
+    first, last = d.min(), d.max()
+    ym = d.dt.to_period("M")
+    rows = ym.value_counts()
+    days = pd.Series(pd.date_range(first, last)).dt.to_period("M").value_counts()  # covered calendar days
+    rate = (rows / days.reindex(rows.index)).rename("rate")
+    monthly = rate.groupby(rate.index.month).mean().sort_index()
+    median = float(monthly.median())
+    ratios = {int(m): float(v / median) for m, v in monthly.items()}
+    months = tuple(m for m in sorted(ratios) if ratios[m] >= ratio)
+    outside = bool(months) and not set(months) & set(peak_months)
+    return PeakHint(True, months, ratios, monthly, outside)

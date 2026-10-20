@@ -19,7 +19,7 @@ interactive HTML report.
 
 ## Layout
 - `src/gtpfit/ingest/` — client files → canonical tables (done)
-  - `schema.py` canonical fields + header synonyms · `params.py` thresholds with sources
+  - `schema.py` canonical fields + header synonyms · `params.py` thresholds with sources, labels and tooltips (`setting()` metadata)
   - `readers.py` one registry of file readers (content first, extension second): delimited text (any
     extension/delimiter/encoding), .gz/.zip, Excel .xlsx/.xlsm/.xls/.xlsb (python-calamine, fallbacks
     openpyxl/xlrd/pyxlsb; title rows skipped), JSON/JSONL, Parquet, Feather/Arrow, ORC, SQLite, DuckDB.
@@ -98,9 +98,19 @@ python -m pytest -q
   cross-client profiles: revisit after about ten clients. `--wms FILE` on the CLI still takes any profile YAML.
 - Coverage: orders should span 12 months (`min_coverage_days`) and the peak months (`peak_months`); short or
   peak-less history is a warning, not a block.
-- **Client settings vs engine settings.** Every threshold stays in `IngestParams` with its source. The Confirm
-  step shows only the client settings (peak months, longest order gap, unusable-row share, assortment type,
-  SKU case sensitivity, order-line definition), saved under `settings:` in the client's `client.yaml` (only
-  values that differ from the defaults). Assortment type is a preset (`params.ASSORTMENTS`) that sets the three
-  unit sanity bands together; the bands are never edited one by one in the UI. Everything else is in a
-  collapsed "Engine settings", for the session only.
+- **Thresholds carry their own wording.** Each `IngestParams` field is declared with `params.setting()`:
+  block (`client` / `detection`), label, unit, range, and a three-part tooltip (what it does · why the default ·
+  raise / lower), plus source and confidence. The page draws its controls and tooltips from this metadata
+  (`widgets.control`); a test fails if a field lacks it. Write tooltips in general terms, never naming a client
+  or its data. A new field needs a block, or it appears nowhere.
+- **Confirm step settings:**
+  - **Client settings** (always shown): peak months, longest order gap, unusable-row share, assortment type,
+    SKU case sensitivity, order-line definition. Assortment type is a preset (`params.ASSORTMENTS`) that sets
+    the three unit sanity bands together; the bands are never edited one by one.
+  - **Detection settings** (collapsed): Excel row limits, receipts gap, snapshot gap factor, minimum history,
+    date-parse share, header-match strictness, mapping-reuse overlap, peak-hint threshold.
+  - Both are saved under `settings:` in the client's `client.yaml`, only the values that differ from the
+    defaults.
+- **Busiest-months hint** (`coverage.busiest_months`): months at `peak_hint_ratio` × the median month or more,
+  from order lines per covered day, averaged across years; it needs all 12 months. It is a hint only: it never
+  sets `peak_months`, and the coverage check does not use it.

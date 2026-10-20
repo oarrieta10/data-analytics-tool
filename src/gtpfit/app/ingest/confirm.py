@@ -6,8 +6,9 @@ field claimed twice disable "Run ingest".  The confirmed columns are saved
 automatically for the client and offered again ("using last confirmed
 mapping") when the next file looks like the same extract.  A hand-made match
 can be taught to automatic matching for every client ("Remember this synonym").
-Below the mapping, the client settings (peak months, limits, assortment, SKU
-case, what counts as an order line), saved for the client.
+Below the mapping, the client settings (with a busiest-months hint read from
+the order-date column alone) and the collapsed detection settings, both saved
+for the client.
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ import streamlit as st
 import yaml
 
 from gtpfit.ingest import IngestParams, Source, suggest_mapping
+from gtpfit.ingest.coerce import choose_date_format, to_date
+from gtpfit.ingest.coverage import busiest_months
 from gtpfit.ingest.detect import summarize
 from gtpfit.ingest.mapping import saved_mapping_for
 from gtpfit.ingest.readers import headers as source_headers, read as read_source
@@ -83,6 +86,27 @@ def preview(sig: str, path: str, part) -> tuple:
         vals = [str(v) for v in col.dropna().drop_duplicates().head(EXAMPLES)]
         ex[c] = ", ".join(v if len(v) <= 24 else v[:23] + "…" for v in vals)
     return hdr, ex
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def order_hint(sig: str, sources: tuple, column: str, date_format: str | None, min_share: float, ratio: float):
+    """The busiest-months hint from the mapped order-date column alone (the rest of the file is not read).
+    Returns a PeakHint, or a message when the dates can't be read yet."""
+    parts = []
+    for path, part in sources:
+        src = Source(Path(path), part)
+        if column in source_headers(src):
+            df, _ = read_source(src, columns=[column])
+            parts.append(df[column])
+    if not parts:
+        return "Busiest months in this data: map the order date to see them."
+    col = pd.concat(parts, ignore_index=True)
+    fmt, status, _ = choose_date_format(col, date_format, min_share)
+    if fmt is None:
+        return ("Busiest months in this data: the date format isn't settled yet (day or month first?), so no "
+                "suggestion before Review.")
+    dates, _ = to_date(col, fmt)
+    return busiest_months(dates, (), ratio)
 
 
 # ---- screen pieces --------------------------------------------------------------------------------
@@ -223,7 +247,15 @@ def show() -> None:
             overrides[t] = mp
 
     st.subheader("Client settings")
-    widgets.client_settings()
+    hint = None
+    if "orders" in assign:
+        col = mappings.get("orders", {}).get("order_date")
+        p = IngestParams(**state.params_from_json(state.params_json()))
+        hint = order_hint(sig, tuple((str(s.path), s.part) for s in assign["orders"]), col,
+                          prof.date_format if prof else None, p.min_date_parse_share, p.peak_hint_ratio) \
+            if col else "Busiest months in this data: map the order date to see them."
+    widgets.client_settings(hint)
+    widgets.detection_settings()
 
     c1, c2 = st.columns([1, 5])
     if c1.button("← Back", key="ing::back1"):

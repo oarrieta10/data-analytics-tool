@@ -23,6 +23,11 @@ LINE_DEFINITIONS = {
     "row": "Every row in the order file is a line (a SKU split across cartons counts once per carton).",
     "order_sku": "One line per order + SKU: repeated rows for a SKU on an order are merged, quantities summed.",
 }
+LINE_DEFINITION_HELP = (
+    "What one order line is when lines per order, units per line and picks are counted.\n\n"
+    "Default row: every file row, as the client's system wrote it; nothing is merged.\n\n"
+    "Choose order_sku when the system writes one row per carton or pick for the same SKU on an order, so "
+    "lines are not over-counted; keep row when each row really is a separate pick. Agree it with the client.")
 _SUMS = ("eaches", "cases")
 
 

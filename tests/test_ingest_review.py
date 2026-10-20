@@ -326,3 +326,57 @@ def test_receipt_records_the_folder(tmp_path):
     out = write_outputs(r, tmp_path / "_ingest", client="Acme", folder=SAMPLE)
     html = (out / "data_receipt.html").read_text(encoding="utf-8")
     assert "Folder read" in html and str(SAMPLE) in html
+
+
+# ---- busiest-months hint (a hint only; never sets peak_months) --------------------------------------------
+
+def _dates(start, end, per_day):
+    """One date per order line: per_day(day) lines on each calendar day."""
+    return pd.Series([d for d in pd.date_range(start, end) for _ in range(per_day(d))])
+
+
+def test_peak_hint_single_peak():
+    from gtpfit.ingest.coverage import busiest_months
+    h = busiest_months(_dates("2025-01-01", "2025-12-31", lambda d: 4 if d.month == 12 else 2), (11, 12))
+    assert h.enough and h.months == (12,) and h.ratios[12] == pytest.approx(2.0)
+    assert h.text == "Busiest months in this data: Dec (2.0×)." and not h.outside
+
+
+def test_peak_hint_two_peaks_outside_the_peak_months():
+    from gtpfit.ingest.coverage import OUTSIDE_NOTE, busiest_months
+    h = busiest_months(_dates("2025-01-01", "2025-12-31", lambda d: 3 if d.month in (5, 6) else 2), (11, 12))
+    assert h.months == (5, 6) and h.outside
+    assert "Worth asking the client" in OUTSIDE_NOTE
+    assert not busiest_months(_dates("2025-01-01", "2025-12-31", lambda d: 3 if d.month in (5, 6) else 2),
+                              (6, 12)).outside  # one hinted month is set: no note
+
+
+def test_peak_hint_flat_and_short_history():
+    from gtpfit.ingest.coverage import busiest_months
+    flat = busiest_months(_dates("2025-01-01", "2025-12-31", lambda d: 2), (11, 12))
+    assert flat.enough and flat.months == () and not flat.outside
+    assert flat.text == "Busiest months in this data: no month stands out."
+    short = busiest_months(_dates("2025-01-01", "2025-11-30", lambda d: 5 if d.month == 11 else 1), (5,))
+    assert not short.enough and short.months == () and not short.outside
+    assert "not enough history to suggest" in short.text
+
+
+def test_peak_hint_partial_months_and_years_averaged():
+    from gtpfit.ingest.coverage import busiest_months
+    # history starting mid-month: a partial month is not made to look quiet (lines per covered day)
+    h = busiest_months(_dates("2024-12-20", "2025-12-19", lambda d: 2), ())
+    assert h.months == () and set(h.ratios.values()) == {1.0}
+    # two years; December at 1.5x in one year only averages to 1.25x: under the 1.3 threshold
+    two = busiest_months(_dates("2024-01-01", "2025-12-31",
+                                lambda d: 3 if (d.month == 12 and d.year == 2024) else 2), (11, 12))
+    assert two.ratios[12] == pytest.approx(1.25) and two.months == ()
+    # a December spike in both years is named
+    both = busiest_months(_dates("2024-01-01", "2025-12-31", lambda d: 3 if d.month == 12 else 2), (11, 12))
+    assert both.months == (12,)
+
+
+def test_peak_hint_threshold_is_a_param():
+    from gtpfit.ingest.coverage import busiest_months
+    data = _dates("2025-01-01", "2025-12-31", lambda d: 5 if d.month == 7 else 4)  # July at 1.25x
+    assert busiest_months(data, (), IngestParams().peak_hint_ratio).months == ()
+    assert busiest_months(data, (), 1.2).months == (7,)

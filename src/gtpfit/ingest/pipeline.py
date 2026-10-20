@@ -311,9 +311,9 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
         d = out[dfield]
         add("date_range", "info", f"{fmt_day(d.min())} to {fmt_day(d.max())} "
             f"({(d.max() - d.min()).days + 1} days, {d.nunique()} with rows).", fld=dfield)
-        if table in params.max_gap_days:
+        if params.gap_limit(table) is not None:
             runs = missing_day_runs(d)
-            lim = params.max_gap_days[table]
+            lim = params.gap_limit(table)
             long = [r for r in runs if r[2] > lim]
             short = [r for r in runs if r[2] <= lim]
             if long:
