@@ -4,7 +4,7 @@
     ingest_sources({table: [Source]}, profile=None, params=None, accept=None, strict=True,
                    on_progress=None) -> IngestResult
     ingest_folder(folder, profile=None, params=None, accept=None, strict=True) -> IngestResult
-    write_outputs(result, out_dir, client=None, detections=None, requested=None) -> Path
+    write_outputs(result, out_dir, client=None, detections=None, requested=None, folder=None) -> Path
 
 accept: {"table:code" or "code": reason} (or {key: {"reason", "at"}}); a block is
 only accepted with a reason, and the reason travels to accepted_blocks.csv and
@@ -553,11 +553,12 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
 
 
 def write_outputs(result: IngestResult, out_dir, client: str | None = None, detections=None,
-                  requested=None) -> Path:
+                  requested=None, folder=None) -> Path:
     """Canonical tables as Parquet, plus issues, units, rejects, a WMS profile draft, and the client-facing
     files: accepted_blocks.csv, rejects_for_client.csv and data_receipt.html.
 
     requested: issue keys ("table:code") the consultant has asked the client to resend.
+    folder: the folder the files were read from, recorded in the receipt.
     """
     from .exports import accepted_blocks, client_rejects
     from .receipt import data_receipt
@@ -578,6 +579,6 @@ def write_outputs(result: IngestResult, out_dir, client: str | None = None, dete
     save_wms_profile(profile_from_result(result, "draft"), out / "wms_profile_draft.yaml")
     accepted_blocks(result).to_csv(out / "accepted_blocks.csv", index=False, encoding="utf-8")
     client_rejects(result).to_csv(out / "rejects_for_client.csv", index=False, encoding="utf-8")
-    (out / "data_receipt.html").write_text(data_receipt(result, client, detections, requested), encoding="utf-8")
+    (out / "data_receipt.html").write_text(data_receipt(result, client, detections, requested, folder), encoding="utf-8")
     con.close()
     return out

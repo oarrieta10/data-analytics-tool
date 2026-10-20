@@ -298,3 +298,31 @@ def test_data_request_template_lists_required_fields(tmp_path):
     ws = load_workbook(p).active
     cells = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value is not None)
     assert "Unit weight" in cells and "Required" in cells
+
+
+# ---- 7. a folder read in place: one-line summary, folder in the receipt ------------------------------
+
+def test_folder_summary_counts(tmp_path):
+    from gtpfit.ingest.detect import summarize
+    folder = _clone(tmp_path / "client")
+    (folder / "notes.md").write_text("# notes", encoding="utf-8")
+    (folder / "contacts.csv").write_text("Name,Phone\nAna,555\n", encoding="utf-8")
+    with zipfile.ZipFile(folder / "extra.zip", "w") as z:
+        z.write(SAMPLE / "receipts.csv", "receipts.csv")
+    files = sorted(p for p in folder.iterdir() if p.is_file())
+    s = summarize(files, detect(files))
+    assert (s.files, s.data, s.ignored, s.zips) == (7, 4, 2, 1)
+    assert s.text == "7 files found: 4 data, 2 ignored, 1 zip"
+
+
+def test_folder_summary_text_without_zip_or_ignored(tmp_path):
+    from gtpfit.ingest.detect import summarize
+    files = sorted(p for p in _clone(tmp_path / "c").iterdir() if p.is_file())
+    assert summarize(files, detect(files)).text == "4 files found: 4 data, 0 ignored, 0 zips"
+
+
+def test_receipt_records_the_folder(tmp_path):
+    r = ingest_folder(SAMPLE, profile=load_wms_profile(WMS))
+    out = write_outputs(r, tmp_path / "_ingest", client="Acme", folder=SAMPLE)
+    html = (out / "data_receipt.html").read_text(encoding="utf-8")
+    assert "Folder read" in html and str(SAMPLE) in html

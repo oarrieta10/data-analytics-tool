@@ -1,11 +1,11 @@
 """state.py — what the guided Ingest page remembers between steps, and where client files live.
 
-Session keys all start with "ing::".  Uploaded files go to a temp folder for
-the session and are removed once step 4 has written the outputs (or on
-"Start another client").  data/workspace/<client>/ keeps only what is worth
-keeping: _ingest/ outputs, the client's WMS profile (wms_<client>.yaml) and
-client.yaml, which is how recent clients are listed.  "A folder" mode reads
-files in place and writes <folder>/_ingest/.
+Session keys all start with "ing::".  Input is always one folder, chosen with
+the operating system's folder dialog (a short-lived subprocess), a pasted path
+or one of the client's recent folders, and read in place: nothing is copied and
+nothing is written into it.  data/workspace/<client>/ keeps _ingest/ outputs,
+the client's remembered mapping (wms_<client>.yaml) and client.yaml (recent
+folders; also how recent clients are listed).
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ import datetime as dt
 import json
 import os
 import re
-import shutil
-import tempfile
+import subprocess
+import sys
 from pathlib import Path
 
 import streamlit as st
@@ -30,7 +30,7 @@ from gtpfit.ingest.schema import TABLE_LABEL
 WORKSPACE = Path(os.environ.get("GTPFIT_WORKSPACE", ROOT / "data" / "workspace"))  # env: tests
 DATA_EXT = {".csv", ".txt", ".tsv", ".tab", ".dat", ".psv", ".gz", ".zip", ".xlsx", ".xlsm", ".xls", ".xlsb",
             ".json", ".jsonl", ".parquet", ".feather", ".arrow", ".orc", ".sqlite", ".db", ".duckdb"}
-STEPS = ["Upload", "Confirm files", "Review", "Done"]
+STEPS = ["Choose folder", "Confirm files", "Review", "Done"]
 UNLOCKS = {"item_master": "container fit, cube and storage", "orders": "volumes, the design day and workstations",
            "receipts": "inbound sizing", "inventory": "storage and days-on-hand sizing"}
 USE_AS = {"item_master": "Item master", "orders": "Orders", "receipts": "Receipts", "inventory": "Inventory",
@@ -77,28 +77,18 @@ def client() -> str:
 
 
 def write_client_yaml(name: str, **info) -> None:
+    """Update the client's client.yaml (keys not given are kept)."""
     d = client_dir(name)
     d.mkdir(parents=True, exist_ok=True)
-    data = {"name": name, "last_ingest": dt.datetime.now().isoformat(timespec="seconds"), **info}
+    p = d / "client.yaml"
+    old = (yaml.safe_load(p.read_text(encoding="utf-8")) or {}) if p.exists() else {}
+    data = {**old, "name": name, "updated": dt.datetime.now().isoformat(timespec="seconds"), **info}
     (d / "client.yaml").write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
-# ---- where the files are ---------------------------------------------------------------------
-
-def mode() -> str:
-    return ss().get("ing::mode", "Drop files")
-
-
-def upload_dir() -> Path:
-    """The session's temp folder for dropped files (created on first use)."""
-    if not ss().get("ing::tmpdir") or not Path(ss()["ing::tmpdir"]).exists():
-        ss()["ing::tmpdir"] = tempfile.mkdtemp(prefix="gtpfit_upload_")
-    return Path(ss()["ing::tmpdir"])
-
+# ---- where the files are: one folder, read in place ---------------------------------------------
 
 def input_folder() -> Path | None:
-    if mode() == "Drop files":
-        return upload_dir()
     f = ss().get("ing::folder_path")
     return Path(f) if f else None
 
@@ -108,26 +98,62 @@ def input_files() -> list[Path]:
     return sorted(p for p in f.iterdir() if p.is_file()) if f and f.is_dir() else []
 
 
-def save_uploads(files, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    for up in files or []:
-        target = dest / Path(up.name).name
-        if not target.exists() or target.stat().st_size != up.size:
-            target.write_bytes(up.getbuffer())
-
-
-def remove_uploads() -> None:
-    """Delete the temp upload folder (never a folder the consultant pointed at)."""
-    t = ss().pop("ing::tmpdir", None)
-    if t and Path(t).exists() and Path(t).name.startswith("gtpfit_upload_"):
-        shutil.rmtree(t, ignore_errors=True)
-    ss()["ing::up_gen"] = ss().get("ing::up_gen", 0) + 1  # the uploader forgets its files
-
-
 def output_dir() -> Path:
-    if mode() == "A folder" and input_folder():
-        return input_folder() / "_ingest"
+    """Outputs go to the workspace, never into the client's folder (it may be a shared drive)."""
     return client_dir(client()) / "_ingest"
+
+
+_DIALOG = "; ".join([
+    "import tkinter as tk",
+    "from tkinter import filedialog",
+    "root = tk.Tk()",
+    "root.withdraw()",
+    "root.attributes('-topmost', True)",
+    "print(filedialog.askdirectory(title='Choose the folder holding the client files') or '')",
+])
+DIALOG_TIMEOUT_S = 600  # the consultant may browse a while
+
+
+def choose_folder_dialog(run=subprocess.run) -> str | None:
+    """The operating system's folder picker, in a short-lived subprocess (not the Streamlit thread).
+
+    Returns the chosen path, or None if cancelled or no dialog could be shown (e.g. no display).
+    """
+    try:
+        r = run([sys.executable, "-c", _DIALOG], capture_output=True, text=True, timeout=DIALOG_TIMEOUT_S)
+    except Exception:  # no tkinter / no display / timed out: the paste field still works
+        return None
+    path = (getattr(r, "stdout", "") or "").strip()
+    return path if getattr(r, "returncode", 1) == 0 and path else None
+
+
+RECENT_FOLDERS = 5
+
+
+def recent_folders(name: str) -> list[str]:
+    p = client_dir(name) / "client.yaml"
+    if not name or not p.exists():
+        return []
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return list(data.get("recent_folders") or [])
+
+
+def remember_folder(name: str, folder) -> None:
+    folders = [str(folder)] + [f for f in recent_folders(name) if f != str(folder)]
+    write_client_yaml(name, recent_folders=folders[:RECENT_FOLDERS])
+
+
+def open_folder(path: str) -> str | None:
+    """Use this folder for the client and go to Confirm.  Returns an error message if it can't be used."""
+    p = Path(str(path).strip().strip('"')).expanduser()
+    if not str(path).strip() or not p.is_dir():
+        return f"Not a folder: {path}"
+    ss()["ing::folder_path"] = str(p)
+    remember_folder(client(), p)
+    for k in [k for k in ss().keys() if str(k).startswith(("srcs::", "map::"))]:
+        del ss()[k]  # a new folder: fresh guesses and mappings
+    go(2)
+    return None
 
 
 def signature(paths) -> str:
@@ -281,8 +307,6 @@ def run_ingest(spec: dict, files, expected_rows: dict | None = None):
 
 
 def reset() -> None:
-    """Start another client: forget the run, the choices and the dropped files."""
-    remove_uploads()
+    """Start another client: forget the run and the choices (the client's files were never copied)."""
     for k in [k for k in ss().keys() if str(k).startswith(("ing::", "srcs::", "map::", "thr::", "acc"))]:
-        if k not in ("ing::up_gen",):
-            del ss()[k]
+        del ss()[k]

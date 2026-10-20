@@ -39,6 +39,35 @@ class Detection:
         return str(self.source)
 
 
+@dataclass
+class FolderSummary:
+    files: int
+    data: int      # files with at least one sheet / table guessed as a canonical table
+    ignored: int   # files that are not data (notes, reports, unrecognised tables)
+    zips: int      # zip archives (their members are listed separately as sources)
+
+    @property
+    def text(self) -> str:
+        return (f"{self.files} files found: {self.data} data, {self.ignored} ignored, "
+                f"{self.zips} {'zip' if self.zips == 1 else 'zips'}")
+
+
+def summarize(files, detections) -> FolderSummary:
+    """One line about a folder: how many files, how many hold data, how many were ignored, how many zips."""
+    files = [Path(f) for f in files if Path(f).is_file()]
+    zips = [f for f in files if _is_zip(f)]
+    with_data = {d.file for d in detections if d.table}
+    data = sum(1 for f in files if f not in zips and f in with_data)
+    return FolderSummary(len(files), data, len(files) - len(zips) - data, len(zips))
+
+
+def _is_zip(p: Path) -> bool:
+    try:
+        return detect_format(p) == "zip"
+    except (UnsupportedFileError, ValueError, OSError):
+        return False
+
+
 def _not_data(p: Path, why: str) -> Detection:
     return Detection(p, None, None, "none", why)
 

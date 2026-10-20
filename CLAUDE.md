@@ -35,10 +35,11 @@ interactive HTML report.
     `request_template.py` data request (HTML / Excel) from the schema
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
-  - `app/ingest/` guided flow 1 Upload → 2 Confirm files → 3 Review → 4 Done (`state.py` session + files,
-    `widgets.py` shared pieces); dropped files go to a temp folder removed at Done
+  - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files → 3 Review → 4 Done (`state.py` session,
+    folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
+    a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
 - `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
-  date format; saved automatically), `client.yaml` (git-ignored; raw dropped files are not kept)
+  date format; saved automatically), `client.yaml` (recent folders) — git-ignored; client files are never copied
 - `src/gtpfit/ingest/learned_synonyms.yaml` — client column names taught with "Remember this synonym" (global;
   committed; column names only, never values)
 - `tests/fixtures/` — frozen sample client (`sample_client/`, its WMS profile, expected findings) and

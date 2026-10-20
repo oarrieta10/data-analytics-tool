@@ -16,6 +16,7 @@ import streamlit as st
 import yaml
 
 from gtpfit.ingest import IngestParams, Source, suggest_mapping
+from gtpfit.ingest.detect import summarize
 from gtpfit.ingest.mapping import saved_mapping_for
 from gtpfit.ingest.readers import headers as source_headers, read as read_source
 from gtpfit.ingest.schema import (FIELD_LABEL, REQUIRED_TABLES, TABLE_LABEL, TABLES, normalise_header,
@@ -195,6 +196,7 @@ def show() -> None:
         return
     sig = state.signature(files)
     dets = state.detected(files)
+    st.markdown(f"**{summarize(files, dets).text}** in `{state.input_folder()}` (read in place)")
     st.subheader("What did we receive?")
     assign = _files_table(dets, sig)
 

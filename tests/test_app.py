@@ -1,10 +1,12 @@
-"""The guided Ingest page (Streamlit AppTest, no browser): every step renders, a clean client goes from
-Upload to Done with no configuration, a blocked one needs a reasoned acceptance, dropped files are removed.
+"""The guided Ingest page (Streamlit AppTest, no browser): every step renders, a client folder is read in
+place (nothing copied) and goes from Choose folder to Done, a blocked one needs a reasoned acceptance,
+mappings / units / recent folders are remembered per client.
 
-The uploader itself cannot be driven by AppTest, so files are placed where the page reads them: a folder
-("A folder" mode) or the session's temp upload folder ("Drop files" mode).
+The native folder dialog cannot be driven by AppTest, so tests open a folder the other way a consultant
+can: paste its path and click Open.
 """
 import shutil
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -30,84 +32,142 @@ def _copy(dst: Path, **frames) -> Path:
     return dst
 
 
-def _app(tmp_path, monkeypatch, folder=None, upload_dir=None, client="Acme", **state):
-    monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
-    at = AppTest.from_string(INGEST, default_timeout=300)
-    if folder:
-        at.session_state["ing::mode"] = "A folder"
-        at.session_state["ing::folder_pick"] = "Other folder…"
-        at.session_state["ing::folder_other"] = str(folder)
-    if upload_dir:
-        at.session_state["ing::tmpdir"] = str(upload_dir)
-    if client:
-        at.session_state["ing::client_new"] = client
-    for k, v in state.items():
-        at.session_state[k] = v
-    return at.run()
-
-
-def _step(at) -> int:
-    return at.session_state["ing::step"]
-
-
 def _next(at, key):
     at.button(key=key).click().run()
     assert not at.exception, at.exception
     return at
 
 
-# ---- step 1 ---------------------------------------------------------------------------------------
-
-def test_upload_step_renders_empty(tmp_path, monkeypatch):
-    at = _app(tmp_path, monkeypatch, client=None)
+def _app(tmp_path, monkeypatch, folder=None, client="Acme", **state):
+    """Start the page; with a folder, open it (paste + Open), which lands on step 2."""
+    monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_string(INGEST, default_timeout=300)
+    if client:
+        at.session_state["ing::client_pick"] = "New client…"  # the list defaults to the most recent client
+        at.session_state["ing::client_new"] = client
+    for k, v in state.items():
+        at.session_state[k] = v
+    at.run()
     assert not at.exception, at.exception
+    if folder:
+        at.text_input(key="ing::folder_paste").input(str(folder)).run()
+        at = _next(at, "ing::folder_open")
+    return at
+
+
+def _again(tmp_path, monkeypatch, folder=None):
+    """A later session for the same (now recent) client."""
+    return _app(tmp_path, monkeypatch, folder=folder, client=None, **{"ing::client_pick": "Acme"})
+
+
+def _step(at) -> int:
+    return at.session_state["ing::step"]
+
+
+def _ws(tmp_path) -> Path:
+    return tmp_path / "ws" / "Acme"
+
+
+# ---- step 1: choose a folder ----------------------------------------------------------------------
+
+def test_choose_folder_screen(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, client=None)
     assert _step(at) == 1
-    assert at.button(key="ing::to2").disabled  # no client, no files
     text = " ".join(m.value for m in at.markdown)
-    for slot in ("Item master", "Order history", "Receipts (inbound)", "Inventory snapshots"):
-        assert slot in text
+    assert "Pick the folder holding the client's files. Nothing is copied." in text
+    assert "drop" not in text.lower()
+    assert at.button(key="ing::choose").label.startswith("Choose folder")
+    assert at.button(key="ing::choose").disabled  # name the client first
+    assert not at.get("file_uploader") and not [r for r in at.radio if "Files from" in r.label]
+    for card in ("Choose folder", "Confirm files", "Review"):
+        assert card in text
+    for table in ("Item master", "Order history", "Receipts (inbound)", "Inventory snapshots"):
+        assert table in text
     assert "Data stays on this computer" in text
     assert any(e.label.startswith("Advanced thresholds") for e in at.expander)
 
 
-def test_upload_slots_fill_from_detection(tmp_path, monkeypatch):
-    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
-    text = " ".join(m.value for m in at.markdown)
-    for f in FILES:
-        assert f"✅ {f}" in text
-    assert not at.button(key="ing::to2").disabled
-
-
-# ---- the clean path: Upload -> Confirm -> Review -> Done --------------------------------------------
-
-def test_clean_client_goes_through_all_steps(tmp_path, monkeypatch):
+def test_opening_a_folder_shows_summary_and_goes_to_confirm(tmp_path, monkeypatch):
     folder = _copy(tmp_path / "client")
-    at = _next(_app(tmp_path, monkeypatch, folder=folder), "ing::to2")
+    (folder / "notes.md").write_text("# notes", encoding="utf-8")
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    assert _step(at) == 2
+    text = " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+    assert "5 files found: 4 data, 1 ignored, 0 zips" in text and str(folder) in text
+
+
+def test_bad_path_stays_on_step_one(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch)
+    at.text_input(key="ing::folder_paste").input(str(tmp_path / "nope")).run()
+    at = _next(at, "ing::folder_open")
+    assert _step(at) == 1 and any("not a folder" in e.value.lower() for e in at.error)
+
+
+def test_dialog_helper():
+    from types import SimpleNamespace
+    from gtpfit.app.ingest.state import choose_folder_dialog
+    ok = lambda *a, **k: SimpleNamespace(returncode=0, stdout="C:/data/acme\n")
+    cancel = lambda *a, **k: SimpleNamespace(returncode=0, stdout="\n")
+
+    def broken(*a, **k):
+        raise OSError("no display")
+    assert choose_folder_dialog(run=ok) == "C:/data/acme"
+    assert choose_folder_dialog(run=cancel) is None
+    assert choose_folder_dialog(run=broken) is None
+
+
+def test_recent_folders_remembered_per_client(tmp_path, monkeypatch):
+    import yaml
+    folder = _copy(tmp_path / "client")
+    _app(tmp_path, monkeypatch, folder=folder)
+    info = yaml.safe_load((_ws(tmp_path) / "client.yaml").read_text(encoding="utf-8"))
+    assert info["recent_folders"][0] == str(folder)
+    at = _again(tmp_path, monkeypatch)  # Acme again, no folder yet
+    picks = [b for b in at.button if b.key and b.key.startswith("ing::recent::")]
+    assert [b.label for b in picks] == [str(folder)]
+    at = _next(at, picks[0].key)
+    assert _step(at) == 2
+    beta = _app(tmp_path, monkeypatch, client="Beta")
+    assert not [b for b in beta.button if b.key and b.key.startswith("ing::recent::")]
+
+
+# ---- the clean path, read in place ------------------------------------------------------------------
+
+def _snapshot(folder: Path) -> dict:
+    return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in folder.rglob("*")}
+
+
+def test_clean_client_read_in_place_through_all_steps(tmp_path, monkeypatch):
+    from gtpfit.ingest import readers
+    folder = _copy(tmp_path / "client")
+    before = _snapshot(folder)
+    tmp_before = {p.name for p in Path(tempfile.gettempdir()).glob("gtpfit_upload_*")}
+    extracted_before = len(list(readers._TMP.iterdir()))
+    at = _app(tmp_path, monkeypatch, folder=folder)
     assert _step(at) == 2
     files = next(d.value for d in at.dataframe if "Use as" in d.value.columns).set_index("File")
     assert files.loc["orders.csv", "Use as"] == "Orders" and files.loc["item_master.csv", "Rows"] != "—"
-    labels = [e.label for e in at.expander]
-    assert any(lbl.startswith("Column mapping: Item master (") for lbl in labels)
-    assert not at.button(key="ing::run").disabled
+    assert any(lbl.startswith("Column mapping: Item master (") for lbl in (e.label for e in at.expander))
     at = _next(at, "ing::run")
     assert _step(at) == 3
-    assert any("Proceed with cautions" in w.value for w in at.warning)  # short history, no peak, guessed units
-    assert not [e for e in at.error if "BLOCKED" in e.value]
+    assert any("Proceed with cautions" in w.value for w in at.warning)
     assert any("COVERAGE" in m.value for m in at.markdown)
-    assert not at.button(key="ing::to4").disabled
     at = _next(at, "ing::to4")
-    assert _step(at) == 4
-    out = folder / "_ingest"
+    assert _step(at) == 4 and any("Ingest complete" in s.value for s in at.success)
+    out = _ws(tmp_path) / "_ingest"
     for f in ("orders.parquet", "data_receipt.html", "rejects_for_client.csv", "accepted_blocks.csv"):
         assert (out / f).exists(), f
-    assert any("Ingest complete" in s.value for s in at.success)
+    assert str(folder) in (out / "data_receipt.html").read_text(encoding="utf-8")
+    # nothing copied, nothing written beside the client's files
+    assert _snapshot(folder) == before
+    assert {p.name for p in Path(tempfile.gettempdir()).glob("gtpfit_upload_*")} == tmp_before
+    assert len(list(readers._TMP.iterdir())) == extracted_before
 
 
 def test_missing_required_column_disables_run(tmp_path, monkeypatch):
     im = pd.read_csv(SAMPLE / "item_master.csv", dtype=str).drop(columns=["Case Pack"])
-    at = _next(_app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client", item_master=im)), "ing::to2")
-    red = " ".join(m.value for m in at.markdown)
-    assert "Case quantity is required" in red
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client", item_master=im))
+    assert "Case quantity is required" in " ".join(m.value for m in at.markdown)
     assert at.button(key="ing::run").disabled
 
 
@@ -119,7 +179,7 @@ def test_block_needs_reasoned_acceptance(tmp_path, monkeypatch):
     clipped = o.sort_values("_d", kind="stable").head(6000).drop(columns="_d")
     folder = _copy(tmp_path / "client", orders=clipped)
     at = _app(tmp_path, monkeypatch, folder=folder, **{"thr::excel_row_limits": "6000"})
-    at = _next(_next(at, "ing::to2"), "ing::run")
+    at = _next(at, "ing::run")
     assert _step(at) == 3
     assert any("BLOCKED" in e.value for e in at.error)
     assert at.button(key="ing::to4").disabled
@@ -132,26 +192,17 @@ def test_block_needs_reasoned_acceptance(tmp_path, monkeypatch):
     at.text_input(key=f"accwhy::{key}").input("Client confirmed the export ends there").run()
     at = _next(at, f"accok::{key}")
     assert not [e for e in at.error if "BLOCKED" in e.value]
-    assert not at.button(key="ing::to4").disabled
     at = _next(at, "ing::to4")
-    out = folder / "_ingest"
+    out = _ws(tmp_path) / "_ingest"
     ab = pd.read_csv(out / "accepted_blocks.csv")
     assert list(ab["reason"]) == ["Client confirmed the export ends there"] and ab["accepted_at"].notna().all()
     receipt = (out / "data_receipt.html").read_text(encoding="utf-8")
     assert "Client confirmed the export ends there" in receipt and "Asked of the client" in receipt
 
 
-# ---- dropped files live in a temp folder until Done ----------------------------------------------------
-
-def test_dropped_files_removed_after_done(tmp_path, monkeypatch):
-    up = _copy(tmp_path / "gtpfit_upload_test")
-    at = _app(tmp_path, monkeypatch, upload_dir=up)
-    at = _next(_next(_next(at, "ing::to2"), "ing::run"), "ing::to4")
-    assert _step(at) == 4
-    assert not up.exists()  # temp uploads gone
-    kept = tmp_path / "ws" / "Acme"
-    assert (kept / "_ingest" / "data_receipt.html").exists() and (kept / "client.yaml").exists()
-    at = _next(at, "ing::restart")
+def test_start_another_client(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
+    at = _next(_next(_next(at, "ing::run"), "ing::to4"), "ing::restart")
     assert _step(at) == 1
     assert "Acme" in at.selectbox(key="ing::client_pick").options  # now a recent client
 
@@ -213,27 +264,22 @@ def learned(tmp_path, monkeypatch):
     return tmp_path / "learned.yaml"
 
 
-def _again(tmp_path, monkeypatch, folder):
-    """A later session for the same (now recent) client."""
-    return _app(tmp_path, monkeypatch, folder=folder, client=None, **{"ing::client_pick": "Acme"})
-
-
 def test_no_profile_picker_and_no_save_button(tmp_path, monkeypatch, learned):
-    folder = _copy(tmp_path / "client")
-    at = _app(tmp_path, monkeypatch, folder=folder)
+    at = _app(tmp_path, monkeypatch)
     assert not [s for s in at.selectbox if "WMS" in s.label]
-    at = _next(_next(at, "ing::to2"), "ing::run")
+    at.text_input(key="ing::folder_paste").input(str(_copy(tmp_path / "client"))).run()
+    at = _next(_next(at, "ing::folder_open"), "ing::run")
     assert not [b for b in at.button if "Save WMS profile" in b.label]
 
 
 def test_mapping_saved_automatically_and_reloaded(tmp_path, monkeypatch, learned):
     import yaml
     folder = _copy(tmp_path / "client")
-    at = _next(_next(_app(tmp_path, monkeypatch, folder=folder), "ing::to2"), "ing::run")
-    prof = yaml.safe_load((tmp_path / "ws" / "Acme" / "wms_acme.yaml").read_text(encoding="utf-8"))
+    _next(_app(tmp_path, monkeypatch, folder=folder), "ing::run")
+    prof = yaml.safe_load((_ws(tmp_path) / "wms_acme.yaml").read_text(encoding="utf-8"))
     assert prof["columns"]["item_master"]["sku"] == "Item Number" and "Item Number" in prof["headers"]["item_master"]
     # same extract resent: reused, and said so
-    at = _next(_again(tmp_path, monkeypatch, folder), "ing::to2")
+    at = _again(tmp_path, monkeypatch, folder)
     labels = [e.label for e in at.expander if e.label.startswith("Column mapping")]
     assert labels and all(lbl.endswith("last confirmed mapping") for lbl in labels)
     assert any("Using last confirmed mapping" in i.value for i in at.info)
@@ -241,8 +287,7 @@ def test_mapping_saved_automatically_and_reloaded(tmp_path, monkeypatch, learned
     im = pd.read_csv(SAMPLE / "item_master.csv", dtype=str).rename(columns={
         "Item Description": "Desc", "Category": "Dept", "Sub Category": "Class", "Case Length": "Ctn L",
         "Case Width": "Ctn W", "Case Height": "Ctn H"})
-    other = _copy(tmp_path / "client2", item_master=im)
-    at = _next(_again(tmp_path, monkeypatch, other), "ing::to2")
+    at = _again(tmp_path, monkeypatch, _copy(tmp_path / "client2", item_master=im))
     by = {lbl.split(":")[1].split("(")[0].strip(): lbl for lbl in (e.label for e in at.expander)
           if lbl.startswith("Column mapping")}
     assert not by["Item master"].endswith("last confirmed mapping")
@@ -256,7 +301,7 @@ def test_unit_decision_persists_per_client(tmp_path, monkeypatch, learned):
     im[dims] = (im[dims] * 2.54).round(2)                                   # centimetres,
     im[["Unit Weight", "Case Weight"]] = (im[["Unit Weight", "Case Weight"]] / 2.20462262185).round(3)  # kilograms
     folder = _copy(tmp_path / "client", item_master=im)                     # no unit in any column name
-    at = _next(_next(_app(tmp_path, monkeypatch, folder=folder), "ing::to2"), "ing::run")
+    at = _next(_app(tmp_path, monkeypatch, folder=folder), "ing::run")
     key = "item_master:unit_ambiguous"
     assert any("BLOCKED" in e.value for e in at.error)
     pick = at.selectbox(key=f"unitpick::{key}")
@@ -264,10 +309,10 @@ def test_unit_decision_persists_per_client(tmp_path, monkeypatch, learned):
     pick.select(next(o for o in pick.options if o.startswith("cm / kg"))).run()
     at = _next(at, f"unituse::{key}")
     assert not [e for e in at.error if "BLOCKED" in e.value]
-    prof = yaml.safe_load((tmp_path / "ws" / "Acme" / "wms_acme.yaml").read_text(encoding="utf-8"))
+    prof = yaml.safe_load((_ws(tmp_path) / "wms_acme.yaml").read_text(encoding="utf-8"))
     assert prof["units"] == {"length": "cm", "weight": "kg"}
     # next session, same client: the decision is already made
-    at = _next(_next(_again(tmp_path, monkeypatch, folder), "ing::to2"), "ing::run")
+    at = _next(_again(tmp_path, monkeypatch, folder), "ing::run")
     assert not [e for e in at.error if "BLOCKED" in e.value]
     assert not at.button(key="ing::to4").disabled
 
@@ -277,20 +322,18 @@ def test_remember_synonym_teaches_automatic_matching(tmp_path, monkeypatch, lear
     im = pd.read_csv(SAMPLE / "item_master.csv", dtype=str).rename(columns={"Item Number": "STOCKCODE"})
     folder = _copy(tmp_path / "client", item_master=im)
     # a hand-made match confirmed earlier for this client: STOCKCODE is the SKU
-    hdr = list(im.columns)
     cols = {"sku": "STOCKCODE", "description": "Item Description", "unit_l": "Unit Length", "unit_w": "Unit Width",
             "unit_h": "Unit Height", "unit_weight": "Unit Weight", "case_qty": "Case Pack"}
-    acme = tmp_path / "ws" / "Acme"
-    acme.mkdir(parents=True)
-    (acme / "wms_acme.yaml").write_text(yaml.safe_dump({"name": "Acme", "columns": {"item_master": cols},
-                                                        "headers": {"item_master": hdr},
-                                                        "saved_at": "2026-10-20T10:00:00"}), encoding="utf-8")
-    at = _next(_again(tmp_path, monkeypatch, folder), "ing::to2")
+    _ws(tmp_path).mkdir(parents=True)
+    (_ws(tmp_path) / "wms_acme.yaml").write_text(yaml.safe_dump(
+        {"name": "Acme", "columns": {"item_master": cols}, "headers": {"item_master": list(im.columns)},
+         "saved_at": "2026-10-20T10:00:00"}), encoding="utf-8")
+    at = _again(tmp_path, monkeypatch, folder)
     btn = "syn::item_master::sku::STOCKCODE"
     assert at.button(key=btn).label.startswith("Remember this synonym")
     at = _next(at, btn)
     assert "stockcode" in learned.read_text(encoding="utf-8")
     # a brand-new client with the same kind of export: matched automatically now
-    at = _next(_app(tmp_path, monkeypatch, folder=folder, client="Beta"), "ing::to2")
+    at = _app(tmp_path, monkeypatch, folder=folder, client="Beta")
     assert not [m for m in at.markdown if "SKU / item number is required" in m.value]
     assert not at.button(key="ing::run").disabled

@@ -1,4 +1,4 @@
-"""ingest — the workbench Ingest page as a guided flow: 1 Upload → 2 Confirm files → 3 Review → 4 Done.
+"""ingest — the workbench Ingest page as a guided flow: 1 Choose folder → 2 Confirm files → 3 Review → 4 Done.
 
 Answers, in order: what did I receive, is it what I think it is, can I trust
 it, and what does it cover.  Step state lives in st.session_state ("ing::step").

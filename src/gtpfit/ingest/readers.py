@@ -11,6 +11,11 @@ blanks as NA, numbers and dates kept native where the format stores them
 not care where the data came from.  `columns` limits reading to the mapped
 columns.  meta: format, encoding, part, data_rows, headers, duplicate_headers.
 
+Files are read in place (DuckDB, calamine, pyarrow, sqlite3); nothing is
+copied.  The one exception is compressed input: a gzip file or a zip member is
+decompressed to a temp file (removed when the process exits), since none of the
+readers can stream it.
+
 Formats: delimited text with any extension (delimiter , tab | ; sniffed;
 encoding sniffed), gzip and zip (read through), Excel .xlsx .xlsm .xls .xlsb
 (python-calamine, falling back to openpyxl / xlrd / pyxlsb; title rows above
