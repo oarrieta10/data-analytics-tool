@@ -1,4 +1,4 @@
-"""mapping.py — which client column is which canonical field; saved WMS profiles.
+"""mapping.py — which client column is which canonical field; the client's saved mapping (profile).
 
     suggest_mapping(headers, table) -> Mapping   automatic, from schema synonyms
     load_wms_profile(path) / save_wms_profile(profile, path) / saved_mapping_for(profile, table, headers)
@@ -98,12 +98,12 @@ def mapping_from_profile(headers, table: str, columns: dict) -> Mapping:
             m.missing_optional.append(f.name)
     unknown = set(columns) - {f.name for f in TABLES[table]}
     if unknown:
-        raise ValueError(f"WMS profile maps unknown {table} fields: {sorted(unknown)}")
+        raise ValueError(f"Mapping file maps unknown {table} fields: {sorted(unknown)}")
     m.unused_headers = [h for h in headers if h not in set(m.mapping.values())]
     return m
 
 
-# ---- WMS profiles -------------------------------------------------------------
+# ---- saved mappings (profiles) -------------------------------------------------------------
 
 @dataclass
 class WmsProfile:
@@ -145,10 +145,10 @@ def parse_wms_profile(data: dict) -> WmsProfile:
     known = set(WmsProfile.__dataclass_fields__)
     bad = set(data) - known
     if bad:
-        raise ValueError(f"Unknown WMS profile keys: {sorted(bad)}")
+        raise ValueError(f"Unknown mapping file keys: {sorted(bad)}")
     unknown_tables = set(data.get("columns", {})) - set(TABLES)
     if unknown_tables:
-        raise ValueError(f"Unknown tables in WMS profile: {sorted(unknown_tables)}")
+        raise ValueError(f"Unknown tables in mapping file: {sorted(unknown_tables)}")
     return WmsProfile(**data)
 
 

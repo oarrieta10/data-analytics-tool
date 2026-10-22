@@ -41,14 +41,14 @@ _KIND_UNIT = {"length": "length: from header, profile or data", "weight": "weigh
 # ---- pure helpers (tested) ----------------------------------------------------------------------
 
 def default_mapping(table: str, headers: list, profile_columns: dict | None) -> dict:
-    """The starting mapping: the WMS profile's columns for this table if it has them, else automatic matching."""
+    """The starting mapping: the client's saved columns for this table if it has them, else automatic matching."""
     if profile_columns:
         return {f: h for f, h in profile_columns.items() if h in headers}
     return dict(suggest_mapping(headers, table).mapping)
 
 
 def effective_profile_text(profile_text: str | None, overrides: dict) -> str | None:
-    """The WMS profile with the consultant's column choices for the tables they changed."""
+    """The client's saved profile with the consultant's column choices for the tables they changed."""
     if not overrides:
         return profile_text
     base = (yaml.safe_load(profile_text) if profile_text else None) or {"name": "workbench"}

@@ -1,4 +1,4 @@
-"""Command line: python -m gtpfit.ingest FOLDER [--wms PROFILE.yaml] [--accept KEY=REASON ...] [--out DIR]
+"""Command line: python -m gtpfit.ingest FOLDER [--wms MAPPING.yaml] [--accept KEY=REASON ...] [--out DIR]
 
 KEY is an issue code (excel_row_limit) or table:code (orders:date_gap).  A block
 is only accepted with a reason; the reason is written to accepted_blocks.csv and
@@ -36,7 +36,7 @@ def _accept_arg(items) -> dict:
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="gtpfit.ingest", description="Read a client's warehouse files into canonical tables.")
     ap.add_argument("folder")
-    ap.add_argument("--wms", help="WMS profile YAML (column names, units, date format)")
+    ap.add_argument("--wms", help="a client's saved mapping YAML, e.g. data/workspace/<client>/wms_<client>.yaml (columns, units, date format)")
     ap.add_argument("--accept", nargs="*", default=[], metavar="KEY=REASON",
                     help="accept a block you have checked, with a reason: code=reason or table:code=reason")
     ap.add_argument("--out", help="output folder (default FOLDER/_ingest)")

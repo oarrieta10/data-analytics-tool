@@ -3,7 +3,7 @@
 Decided per group of columns ("unit" = each dims + weight, "case" = case dims +
 weight), in this order:
     1. a unit written in the header, e.g. "Length (cm)"
-    2. the unit declared in the WMS profile
+    2. the units saved for the client (chosen on the Review step)
     3. the data: the one unit pair whose median size and density fall inside the
        ranges for the client's assortment type (params.*_longest_side_in,
        params.density_lb_ft3, set together by params.ASSORTMENTS)

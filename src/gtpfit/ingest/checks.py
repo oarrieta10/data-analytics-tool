@@ -110,7 +110,7 @@ ISSUE_TEXT: dict[str, IssueText] = {
                        "Worth a glance: a wrong match feeds wrong values in."),
     "auto_mapped": _T("Columns matched automatically",
                       "Columns were matched to fields by their names.",
-                      "None once confirmed; save them as a WMS profile for next time."),
+                      "None once confirmed; the confirmed mapping is remembered for this client."),
     "alternative_columns": _T("Other columns could also fit",
                               "Another column could also supply this field.",
                               "None if the chosen column is the right one."),
@@ -140,7 +140,7 @@ ISSUE_TEXT: dict[str, IssueText] = {
                                "The date format was worked out from the values.",
                                "None."),
     "date_format_mismatch": _T("Dates don't match the declared format",
-                               "The WMS profile names a date format the file does not use.",
+                               "The date format saved for this client does not fit this file.",
                                "Dates would be misread (e.g. day and month swapped)."),
     "date_format_ambiguous": _T("Day and month could be either way round",
                                 "Every date fits both day-first and month-first.",
@@ -166,7 +166,7 @@ ISSUE_TEXT: dict[str, IssueText] = {
                            "Worth checking with the client; could be a niche assortment."),
     "units_statistical": _T("Units worked out from the data",
                             "No units were declared; the only unit pair that fits was used.",
-                            "Confirm with the client and declare it in the WMS profile."),
+                            "Confirm the units with the client; a wrong guess scales every size and weight."),
     # ---- order lines and cases
     "cases_need_item_master": _T("Full cases need case packs",
                                  "Some order lines are counted in full cases; units need the item master's case pack.",
@@ -190,8 +190,8 @@ def explain(code: str) -> IssueText:
 # Blocks that cannot be accepted, with what to do instead.  Accepting a unit block would let the sizes and
 # weights through unconverted, read as inches and pounds whatever they really are.
 NOT_ACCEPTABLE = {
-    "unit_ambiguous": "choose the units (workbench), declare them in the WMS profile or name them in the headers",
-    "unit_mismatch": "choose the units that fit (workbench) or correct the WMS profile",
+    "unit_ambiguous": "choose the units this client uses on the Review step, or name them in the column headers",
+    "unit_mismatch": "choose the units that fit on the Review step",
 }
 
 

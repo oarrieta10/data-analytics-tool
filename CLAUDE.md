@@ -44,14 +44,14 @@ interactive HTML report.
   date format; saved automatically), `client.yaml` (recent folders, client settings) — git-ignored; client files are never copied
 - `src/gtpfit/ingest/learned_synonyms.yaml` — client column names taught with "Remember this synonym" (global;
   committed; column names only, never values)
-- `tests/fixtures/` — frozen sample client (`sample_client/`, its WMS profile, expected findings) and
+- `tests/fixtures/` — frozen sample client (`sample_client/`, its saved column mapping, expected findings) and
   Excel fixtures (.xls/.xlsb/.xlsm need Excel to make: `make_excel_fixtures.py`); see its README
 - `tests/` — pytest; run `python -m pytest -q`
 
 ## Planned modules (build in this order; tests first for each)
 After each module: add its page to the workbench with live parameter controls, launch it, and let
 the user inspect and play with it before starting the next module.
-1. ~~`ingest/`~~ (done) — column mapping (saved per-WMS profiles), unit detection, type coercion, refusal of
+1. ~~`ingest/`~~ (done) — column mapping (saved per client), unit detection, type coercion, refusal of
    silent problems (Excel row limit, date gaps, negative qty). DuckDB for large files.
 2. `quality/` — data score weighted by lines/units/cube; placeholder, physics and outlier checks.
    How to validate it is **to be agreed** (real data has no answer key).

@@ -136,8 +136,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     else:
         m = suggest_mapping(headers, table, params)
         add("auto_mapped", "info", "Columns matched automatically: " +
-            "; ".join(f"{f} <- '{h}'" + (" (fuzzy)" if m.method[f] == "fuzzy" else "") for f, h in m.mapping.items()) +
-            ". Save them as a WMS profile once confirmed.")
+            "; ".join(f"{f} <- '{h}'" + (" (fuzzy)" if m.method[f] == "fuzzy" else "") for f, h in m.mapping.items()) + ".")
         fuzzy = {f: h for f, h in m.mapping.items() if m.method[f] == "fuzzy"}
         if fuzzy:
             add("fuzzy_header", "warn", "Matched on similar names only: " +
@@ -148,7 +147,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     used_dupes = sorted(dupes & set(m.mapping.values()))
     if used_dupes:
         add("duplicate_header", "block", f"{paths[0]} repeats column names {used_dupes} that the mapping uses; "
-            "it is unclear which one holds the data. Rename one in the file or the WMS profile.")
+            "it is unclear which one holds the data. Rename one of them in the file.")
         return res
     if dupes:
         add("duplicate_header", "info", f"{paths[0]} repeats column names {sorted(dupes)} (e.g. joined database "
@@ -156,7 +155,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     req = {f.name for f in TABLES[table] if f.required}
     for f, hs in m.ambiguous.items():
         add("ambiguous_column", "block" if f in req else "warn",
-            f"{f} could be any of {hs}; name it in the WMS profile.", fld=f)
+            f"{f} could be any of {hs}; pick the right one in the column mapping.", fld=f)
     missing = [f for f in m.missing_required if f not in m.ambiguous]
     if missing:
         add("missing_required_column", "block", f"No column found for required field(s) {missing}. "
@@ -253,7 +252,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
             elif status == "ambiguous":
                 good = [k for k, v in fits.items() if v >= params.min_date_parse_share]
                 add("date_format_ambiguous", "block", f"{f.name} values (e.g. {ex}) fit more than one format: "
-                    f"{good}. Declare date_format in the WMS profile.", fld=f.name)
+                    f"{good}. Ask the client whether the day or the month comes first.", fld=f.name)
             elif status == "none":
                 add("date_unparseable", "block", f"No known date format fits {f.name} (e.g. {ex}); "
                     f"best: {best_txt}.", fld=f.name)
@@ -384,14 +383,13 @@ def _units(out, m, profile, params, add):
             if len(plaus) == 1:
                 chosen = plaus.iloc[0]
                 add("units_statistical", "warn", f"{g}: {', '.join(undeclared)} unit not stated; the data fits only "
-                    f"{describe(chosen)}. Declare units in the WMS profile to confirm.")
+                    f"{describe(chosen)}. Confirm the units with the client.")
             elif len(plaus) > 1:
                 add("unit_ambiguous", "block", f"{g}: {', '.join(undeclared)} unit not stated and the data fits "
-                    f"several: " + "; ".join(describe(r) for r in plaus.itertuples()) +
-                    ". Declare units in the WMS profile or the headers.")
+                    f"several: " + "; ".join(describe(r) for r in plaus.itertuples()) + ".")
             else:
                 add("unit_ambiguous", "block", f"{g}: {', '.join(undeclared)} unit not stated and no unit pair "
-                    f"falls inside {_expected(g, params)} (fits overall: {fits_txt}). Declare units.")
+                    f"falls inside {_expected(g, params)} (fits overall: {fits_txt}).")
         if chosen is None:
             continue
         lu, wu = chosen.length, chosen.weight
@@ -414,7 +412,7 @@ def _units(out, m, profile, params, add):
 # ---- several tables: confirmed sources, or a folder ----------------------------------
 
 def discover(paths, profile=None, params=None, add=None) -> dict:
-    """{table: [Source]} for files (and their sheets / tables), by WMS profile patterns or by classify()."""
+    """{table: [Source]} for files (and their sheets / tables), by the profile's file patterns or by classify()."""
     add = add or (lambda *a: None)
     files = sorted(Path(p) for p in paths)
     found: dict[str, list] = {}
@@ -430,7 +428,7 @@ def discover(paths, profile=None, params=None, add=None) -> dict:
             add("", "unrecognised_file", "warn", f"{src} does not look like any table; ignored.")
         elif g.confidence == "low":
             add("", "ambiguous_file", "block", f"{src} could be {g.ranking[0][0]} or {g.ranking[1][0]}; "
-                "assign it yourself (workbench) or list it under files: in a WMS profile.")
+                "confirm which table it holds.")
         else:
             found.setdefault(g.table, []).append(src)
     return found
@@ -528,7 +526,7 @@ def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: Inge
 
 def ingest_folder(folder, profile: WmsProfile | None = None, params: IngestParams | None = None,
                   accept=None, strict: bool = True, on_progress=None) -> IngestResult:
-    """Every readable file in the folder (not subfolders), assigned by WMS profile or by classify()."""
+    """Every readable file in the folder (not subfolders), assigned by the profile's file patterns or by classify()."""
     folder = Path(folder)
     params = params or IngestParams()
     acc = normalise_accept(accept)
@@ -575,7 +573,7 @@ def _apply_case_packs(o: pd.DataFrame, im: pd.DataFrame | None, issues: list) ->
 
 
 def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
-    """A WMS profile draft from what this run used — review it, then save it."""
+    """A profile (columns, units, date format) from what this run used: the workbench saves it for the client."""
     u = result.units
     units = {}
     if len(u):
@@ -591,7 +589,7 @@ def profile_from_result(result: IngestResult, name: str) -> WmsProfile:
 
 def write_outputs(result: IngestResult, out_dir, client: str | None = None, detections=None,
                   requested=None, folder=None, line_definition=None) -> Path:
-    """Canonical tables as Parquet, plus issues, units, rejects, a WMS profile draft, and the client-facing
+    """Canonical tables as Parquet, plus issues, units, rejects, a profile draft (what this run used), and the client-facing
     files: accepted_blocks.csv, rejects_for_client.csv and data_receipt.html.
 
     requested: issue keys ("table:code") the consultant has asked the client to resend.

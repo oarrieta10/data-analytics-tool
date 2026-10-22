@@ -3,7 +3,7 @@
 Reads any common client export (readers.py: delimited text, Excel, JSON,
 Parquet, Arrow, ORC, SQLite/DuckDB files, gzip/zip), guesses which table each
 file / sheet / database table holds (classify.py), maps columns to canonical
-fields (saved per-WMS profiles or automatic matching), coerces types,
+fields (the client's saved mapping or automatic matching), coerces types,
 converts lengths/weights to inches/pounds, and refuses silent problems:
 clipped exports, date gaps, unreadable dates, unclear units, too many bad rows.
 
