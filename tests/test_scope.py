@@ -210,3 +210,25 @@ def test_ship_date_basis_drops_unshipped_with_a_reason(ingested):
     cancelled = int((ingested.tables["orders"]["order_status"] == "CANCELLED").sum())
     row = r.summary[r.summary.value == "no ship date"]
     assert int(row.rows_removed.iat[0]) == cancelled
+
+
+# ---- stage 2: does it move the design? ------------------------------------------------------------------
+
+def test_impact_by_hand_under_both_line_definitions():
+    from gtpfit.scope import impact
+    d1, d2 = pd.Timestamp("2025-03-03"), pd.Timestamp("2025-03-04")
+    o = pd.DataFrame({"order_id": ["A", "A", "B", "C"], "order_date": [d1, d1, d1, d2],
+                      "sku": ["x", "x", "y", "x"], "qty": [2, 3, 1, 4]})
+    c = o[o.order_id == "C"]
+    row = impact(o, c, "row").set_index("measure")
+    assert list(row["all_rows"]) == [3, 2.0, 3, 2.5]   # orders, lines/day, peak day, units/line
+    assert list(row["in_scope"]) == [1, 1.0, 1, 4.0]
+    merged = impact(o, c, "order_sku").set_index("measure")
+    assert list(merged["all_rows"][:3]) == [3, 1.5, 2] and merged["all_rows"].iat[3] == pytest.approx(10 / 3)
+
+
+def test_impact_of_an_empty_scope():
+    from gtpfit.scope import impact
+    o = pd.DataFrame({"order_id": ["A"], "order_date": [pd.Timestamp("2025-01-01")], "sku": ["x"], "qty": [1]})
+    r = impact(o, o.iloc[0:0], "row")
+    assert list(r["in_scope"][:3]) == [0, 0.0, 0]

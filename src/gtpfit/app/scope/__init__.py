@@ -233,6 +233,33 @@ def page() -> None:
     _detection_settings()
 
 
+_IMPACT_FMT = {"Orders": "{:,.0f}", "Lines per day (average)": "{:,.0f}", "Peak day (lines)": "{:,.0f}",
+               "Units per line": "{:,.2f}"}
+
+
 def _impact(res, base, name) -> None:
-    """Stage 2: before / after numbers and the coverage re-check (filled in by Stage 2)."""
-    return None
+    """Does it move the design?  Four cheap numbers, all rows -> in scope, under the client's line definition,
+    then the coverage check and busiest-months hint re-run on the in-scope orders (same wording as Ingest)."""
+    how = workspace.line_definition(name)
+    tiles = impact(base["orders"], res.tables["orders"], how)
+    with st.container(border=True):
+        st.markdown(f"**Does it move the design?** all rows → in scope · order lines counted as `{how}`")
+        for col, r in zip(st.columns(len(tiles)), tiles.itertuples()):
+            f = _IMPACT_FMT[r.measure]
+            delta = r.in_scope - r.all_rows if pd.notna(r.in_scope) and pd.notna(r.all_rows) else None
+            shown = None if delta is None else f.format(abs(delta))
+            if shown is not None and float(shown.replace(",", "")) == 0:
+                shown = None  # a change too small to show at this precision
+            col.metric(r.measure, "—" if pd.isna(r.in_scope) else f.format(r.in_scope),
+                       None if shown is None else ("+" if delta > 0 else "-") + shown, delta_color="off")
+            col.caption(f"all rows: {'—' if pd.isna(r.all_rows) else f.format(r.all_rows)}")
+        params = workspace.client_params(name)
+        orders_in = res.tables["orders"]
+        cov = coverage(orders_in, params)
+        for w in cov.warnings:
+            st.warning(w, icon="⚠️")
+        if len(orders_in):
+            hint = busiest_months(orders_in["order_date"], params.peak_months, params.peak_hint_ratio)
+            st.caption(hint.text + " (in-scope orders)")
+            if hint.outside:
+                st.markdown(f":orange[{OUTSIDE_NOTE}]")

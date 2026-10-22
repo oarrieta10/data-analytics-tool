@@ -143,3 +143,18 @@ def test_no_scope_columns(tmp_path, monkeypatch, sample_result):
     assert "No scope columns found; using all rows." in _text(at)
     assert at.slider(key="scp::dates")
     assert not at.button(key="scp::save").disabled  # nothing removed: no note needed
+
+
+def test_impact_tiles_and_coverage_recheck(tmp_path, monkeypatch, scope_result):
+    client = _ingested(tmp_path, scope_result)
+    at = _page(tmp_path, monkeypatch, client)
+    labels = [m.label for m in at.metric]
+    assert labels == ["Orders", "Lines per day (average)", "Peak day (lines)", "Units per line"]
+    orders_before = at.metric[0].value
+    assert not [w for w in at.warning if "peak season" in w.value or "Orders cover" in w.value]  # East: 13 months
+    at.checkbox(key="scp::v::site::DC-East").uncheck().run()
+    assert not at.exception, at.exception
+    assert at.metric[0].value != orders_before and at.metric[0].delta.startswith("-")
+    warns = " ".join(w.value for w in at.warning)
+    assert "Orders cover" in warns and "No orders in Nov, Dec" in warns  # DC-West: Mar-Sep only
+    assert "Busiest months in this data" in _text(at)
