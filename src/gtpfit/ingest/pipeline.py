@@ -38,8 +38,8 @@ from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile
 from .params import IngestParams
 from .classify import classify, list_sources
 from .read import read_headers, read_raw
-from .readers import Source, as_source
-from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES
+from .readers import Source, as_source, read as read_source
+from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES, normalise_header
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 from .units import expected_ranges as _expected
 
@@ -100,6 +100,42 @@ class IngestResult:
             out.append(dict(table=r.table, code=r.code, message=r.message, reason=a.get("reason", ""),
                             accepted_at=a.get("at", "")))
         return out
+
+
+# ---- extra order columns kept for scoping ------------------------------------------
+
+EXTRA_PREVIEW_ROWS = 5000  # rows read to decide which unmapped columns are worth reading in full
+
+
+def _extra_candidates(src, headers, used, dupes, params) -> tuple[list, dict]:
+    """Unmapped text columns with few enough different values in the first rows: (to read, too many values).
+
+    Number-only and date columns are not offered (quantities, line numbers, timestamps).
+    """
+    if params.extra_max_distinct <= 0:
+        return [], {}
+    unmapped = [h for h in dict.fromkeys(headers) if h and h not in used and h not in dupes]
+    if not unmapped:
+        return [], {}
+    try:
+        df, _ = read_source(as_source(src), columns=unmapped, limit=EXTRA_PREVIEW_ROWS)
+    except Exception:  # a preview problem must not stop ingest; extras are optional
+        return [], {}
+    keep, too_many = [], {}
+    for h in unmapped:
+        col = df[h].dropna() if h in df else pd.Series(dtype=object)
+        if col.empty:
+            continue
+        if not coerce.to_number(col)[1].any():
+            continue  # numbers only
+        if max(coerce.date_fits(col).values(), default=0) >= params.min_date_parse_share:
+            continue  # dates
+        k = int(col.nunique())
+        if k > params.extra_max_distinct:
+            too_many[h] = k
+        else:
+            keep.append(h)
+    return keep, too_many
 
 
 # ---- one table ------------------------------------------------------------------
@@ -165,11 +201,12 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     if m.missing_optional:
         add("optional_columns_absent", "info", f"Not in the file: {m.missing_optional}.")
 
-    # -- read only the mapped columns; drop blank rows; spreadsheet row limits
+    # -- read only the mapped columns (plus, for orders, low-cardinality extras); drop blank rows; row limits
     used = list(dict.fromkeys(m.mapping.values()))
+    extras, too_many = _extra_candidates(paths[0], headers, used, dupes, params) if table == "orders" else ([], {})
     frames = []
     for p in paths:
-        df, meta = read_raw(p, columns=used)
+        df, meta = read_raw(p, columns=used + extras)
         if meta["encoding"] not in (None, "utf-8"):
             add("encoding_fallback", "info", f"{p} is not UTF-8; read as {meta['encoding']}.")
         n = meta["data_rows"]
@@ -246,6 +283,20 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
             best = sorted(fits.items(), key=lambda kv: -kv[1])[:2]
             best_txt = ", ".join(f"{k} ({v:.0%})" for k, v in best)
             ex = col.dropna().drop_duplicates().head(3).tolist()
+            if not f.required:  # an optional date (e.g. ship date) never blocks and never stops the gap checks
+                if fmt is None and col.notna().any():
+                    add("unparseable_values", "warn", f"No single date format fits {f.name} (e.g. {ex}); left "
+                        "blank.", count=int(col.notna().sum()), share=float(col.notna().mean()), fld=f.name)
+                if fmt is None:
+                    out[f.name] = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+                    continue
+                vals, failed = coerce.to_date(col, fmt)
+                if failed.any():
+                    add("unparseable_values", "warn", f"{int(failed.sum()):,} {f.name} values are not dates "
+                        f"(e.g. {col[failed].drop_duplicates().head(3).tolist()}); left blank.",
+                        count=failed.sum(), share=failed.mean(), fld=f.name)
+                out[f.name] = vals
+                continue
             if status == "mismatch":
                 add("date_format_mismatch", "block", f"Declared date format {declared} parses only "
                     f"{fits.get(declared, 0):.0%} of {f.name} values (e.g. {ex}); best fits: {best_txt}.", fld=f.name)
@@ -283,6 +334,26 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
         elif f.required:
             blank = col.isna() & ~has_cases if (f.kind == "qty" and has_cases is not None) else col.isna()
             reject(blank, "missing_value", f.name)
+
+    # -- extras: unmapped low-cardinality text columns kept as x_<name> (values as sent) for the Scope step
+    if extras or too_many:
+        kept = []
+        for h in extras:
+            k = int(df[h].nunique(dropna=True))
+            if k > params.extra_max_distinct:
+                too_many[h] = k
+                continue
+            name = "x_" + (normalise_header(h).replace(" ", "_") or "column")
+            while name in out:
+                name += "_"
+            out[name] = df[h].astype("string")
+            kept.append(f"{h} ({k} values) as {name}")
+        msg = ("Kept for scoping: " + "; ".join(kept) + "." if kept else "No extra column kept for scoping.")
+        if too_many:
+            msg += (f" Not kept (more than {params.extra_max_distinct} different values): " +
+                    "; ".join(f"{h} ({k:,}+)" if k > params.extra_max_distinct else h for h, k in too_many.items())
+                    + ".")
+        add("extra_columns", "info", msg)
 
     # -- rows set aside
     for why, label in [("bad_qty", "zero or negative quantity"), ("missing_value", "a blank required field"),

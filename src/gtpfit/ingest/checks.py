@@ -108,6 +108,10 @@ ISSUE_TEXT: dict[str, IssueText] = {
     "fuzzy_header": _T("Columns matched on similar names",
                        "Some columns were matched because their names are close, not exact.",
                        "Worth a glance: a wrong match feeds wrong values in."),
+    "extra_columns": _T("Extra order columns kept for scoping",
+                        "Order columns that match no field but hold only a few different values (e.g. a pick area "
+                        "or carrier) were kept, named x_..., so the Scope step can filter on them.",
+                        "None; they are only used if the scope filters on them."),
     "auto_mapped": _T("Columns matched automatically",
                       "Columns were matched to fields by their names.",
                       "None once confirmed; the confirmed mapping is remembered for this client."),

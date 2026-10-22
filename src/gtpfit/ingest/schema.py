@@ -43,6 +43,10 @@ class Field:
     group: str | None = None  # unit-conversion group: "unit" or "case"
 
 
+# Where the work happens: a site / warehouse / DC (not "location", which inventory uses for the bin).
+_SITE = ("site", "warehouse", "warehouse id", "warehouse code", "whse", "dc", "distribution center",
+         "distribution centre", "facility", "branch", "plant", "fulfillment center", "fulfilment centre", "fc",
+         "site id", "site code")
 _SKU = ("sku", "item", "item number", "item no", "item nbr", "item id", "item code", "product",
         "product id", "product code", "material", "material number", "article", "part number", "part no", "part")
 
@@ -92,7 +96,14 @@ TABLES: dict[str, list[Field]] = {
         Field("cases", "cases", False, ("cases", "cases picked", "full cases", "cases shipped", "case picks")),
         Field("pick_secs", "time", False, ("pick time", "time", "ship time", "pick timestamp", "time picked",
                                            "order start of hour", "start of hour", "pick hour")),
-        Field("channel", "text", False, ("channel", "order type", "sales channel", "customer type")),
+        Field("channel", "text", False, ("channel", "sales channel", "customer type", "channel type")),
+        Field("site", "text", False, _SITE),
+        Field("order_type", "text", False, ("order type", "order class", "order category", "order kind",
+                                            "service level", "priority")),
+        Field("order_status", "text", False, ("order status", "status", "line status", "fulfillment status",
+                                              "fulfilment status", "order state")),
+        # also an order_date synonym: when it is the only date it becomes the order date (required wins)
+        Field("ship_date", "date", False, ("ship date", "shipped date", "date shipped", "shipping date")),
     ],
     "receipts": [
         Field("receipt_id", "id", False, ("receipt", "receipt number", "receipt nbr", "receipt no", "receipt id",
@@ -102,6 +113,7 @@ TABLES: dict[str, list[Field]] = {
         Field("receipt_date", "date", True, ("receipt date", "received date", "date received", "receive date",
                                              "received at", "date")),
         Field("sku", "id", True, _SKU),
+        Field("site", "text", False, _SITE),
         Field("qty", "qty", True, ("qty received", "units received", "received qty", "quantity received",
                                    "received quantity",
                                    "inventory units", "eaches received", "qty", "quantity", "units")),
@@ -111,6 +123,7 @@ TABLES: dict[str, list[Field]] = {
                                                "count date")),
         Field("sku", "id", True, _SKU),
         Field("location", "text", False, ("location", "loc", "bin", "slot", "location code", "storage location")),
+        Field("site", "text", False, _SITE),
         Field("on_hand", "stock", True, ("on hand qty", "on hand", "qty on hand", "oh qty", "oh units",
                                          "on hand units", "quantity on hand", "sum eaches", "qty", "quantity",
                                          "available qty")),
@@ -124,6 +137,7 @@ FIELD_LABEL = {
     "unit_weight": "Unit weight", "case_qty": "Case quantity", "case_l": "Case length", "case_w": "Case width",
     "case_h": "Case height", "case_weight": "Case weight", "order_id": "Order number", "order_date": "Pick / ship date",
     "qty": "Quantity (units)", "cases": "Full cases", "pick_secs": "Pick time", "channel": "Channel",
+    "site": "Site / warehouse", "order_type": "Order type", "order_status": "Order status", "ship_date": "Ship date",
     "receipt_id": "Receipt / ASN / shipment number", "po": "PO number", "receipt_date": "Receipt date",
     "snapshot_date": "Snapshot date", "location": "Location", "on_hand": "Units on hand",
 }
@@ -148,7 +162,11 @@ FIELD_HELP = {
         "qty": "Units picked or shipped on the line (loose units when there is a separate cases column).",
         "cases": "Full cases picked on the line, if counted apart from loose units.",
         "pick_secs": "Time of day the line was picked: drives the hourly profile.",
-        "channel": "Order type, e.g. e-commerce vs store / retail / B2B.",
+        "channel": "Sales channel, e.g. e-commerce vs store / retail / B2B.",
+        "site": "Site, warehouse or DC that filled the order (used to scope the design).",
+        "order_type": "Order type or service level, e.g. standard / expedited / replenishment.",
+        "order_status": "Order or line status, e.g. shipped / cancelled / returned.",
+        "ship_date": "Date the order shipped, if separate from the order date.",
     },
     "receipts": {
         "receipt_id": "Receipt, ASN or inbound shipment / container number.",
@@ -156,12 +174,14 @@ FIELD_HELP = {
         "receipt_date": "Date the goods were received.",
         "sku": "Item / part number received.",
         "qty": "Units received.",
+        "site": "Site, warehouse or DC that received the goods.",
     },
     "inventory": {
         "snapshot_date": "Date of the stock count / snapshot.",
         "sku": "Item / part number.",
         "location": "Storage location.",
         "on_hand": "Units on hand.",
+        "site": "Site, warehouse or DC holding the stock.",
     },
 }
 

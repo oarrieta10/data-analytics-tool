@@ -15,8 +15,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
-import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,15 +22,13 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from gtpfit.app import ROOT
+from gtpfit import workspace as ws
 from gtpfit.ingest import (IngestParams, Source, ingest_sources, ingest_table, load_wms_profile, parse_wms_profile,
                            save_wms_profile, table_inputs)
 from gtpfit.ingest.mapping import WmsProfile
 from gtpfit.ingest.detect import detect
-from gtpfit.ingest.params import DEFAULT_ASSORTMENT, assortment_bands, block_fields, meta
 from gtpfit.ingest.schema import TABLE_LABEL
 
-WORKSPACE = Path(os.environ.get("GTPFIT_WORKSPACE", ROOT / "data" / "workspace"))  # env: tests
 DATA_EXT = {".csv", ".txt", ".tsv", ".tab", ".dat", ".psv", ".gz", ".zip", ".xlsx", ".xlsm", ".xls", ".xlsb",
             ".json", ".jsonl", ".parquet", ".feather", ".arrow", ".orc", ".sqlite", ".db", ".duckdb"}
 STEPS = ["Choose folder", "Confirm files", "Review", "Done"]
@@ -54,17 +50,12 @@ def go(step: int) -> None:
 
 
 def workspace() -> Path:
-    return Path(os.environ.get("GTPFIT_WORKSPACE", WORKSPACE))
+    return ws.workspace()
 
 
 # ---- clients ---------------------------------------------------------------------------------
 
-def safe_name(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9 _.-]", "", name or "").strip()
-
-
-def client_dir(name: str) -> Path:
-    return workspace() / safe_name(name)
+safe_name, client_dir = ws.safe_name, ws.client_dir
 
 
 def recent_clients() -> list[str]:
@@ -81,14 +72,7 @@ def client() -> str:
     return ss().get("ing::client", "") or ""
 
 
-def write_client_yaml(name: str, **info) -> None:
-    """Update the client's client.yaml (keys not given are kept)."""
-    d = client_dir(name)
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / "client.yaml"
-    old = (yaml.safe_load(p.read_text(encoding="utf-8")) or {}) if p.exists() else {}
-    data = {**old, "name": name, "updated": dt.datetime.now().isoformat(timespec="seconds"), **info}
-    (d / "client.yaml").write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+write_client_yaml = ws.write_client_yaml
 
 
 # ---- where the files are: one folder, read in place ---------------------------------------------
@@ -255,53 +239,17 @@ def run_profile_text(overrides: dict | None = None) -> str | None:
 
 # ---- settings: client and detection settings, saved per client ----------------------------------------
 
-# Which IngestParams field shows where comes from its metadata (gtpfit.ingest.params.setting).
-CLIENT_FIELDS = tuple(f for f in block_fields("client") if not meta(f).get("via"))  # drawn one by one
-BAND_FIELDS = tuple(f for f in block_fields("client") if meta(f).get("via") == "assortment")
-DETECTION_FIELDS = tuple(block_fields("detection"))
-EXTRA_SETTINGS = {"assortment": DEFAULT_ASSORTMENT, "line_definition": "row"}  # client settings, not params
-
-
-def _plain(v):
-    return list(v) if isinstance(v, tuple) else v
-
-
-def default_settings() -> dict:
-    d = dataclasses.asdict(IngestParams())
-    return {**{k: _plain(d[k]) for k in CLIENT_FIELDS + DETECTION_FIELDS}, **EXTRA_SETTINGS}
+CLIENT_FIELDS, BAND_FIELDS, DETECTION_FIELDS = ws.CLIENT_FIELDS, ws.BAND_FIELDS, ws.DETECTION_FIELDS
+EXTRA_SETTINGS = ws.EXTRA_SETTINGS
+default_settings, changed, settings_params = ws.default_settings, ws.changed, ws.settings_params
 
 
 def client_settings(name: str | None = None) -> dict:
-    """The client's settings: defaults, then what its client.yaml holds (unknown keys ignored)."""
-    name = client() if name is None else name
-    p = client_dir(name) / "client.yaml"
-    saved = ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("settings") or {}) \
-        if name and p.exists() else {}
-    base = default_settings()
-    return {**base, **{k: v for k, v in saved.items() if k in base}}
+    return ws.client_settings(client() if name is None else name)
 
 
 def save_client_settings(settings: dict, name: str | None = None) -> None:
-    """Save only the values that differ from the defaults, so a later change of default still reaches the client."""
-    base = default_settings()
-    write_client_yaml(name or client(), settings={k: _plain(v) for k, v in settings.items()
-                                                  if k in base and _plain(v) != base[k]})
-
-
-def changed(settings: dict, keys) -> list[str]:
-    base = default_settings()
-    return [k for k in keys if _plain(settings.get(k, base[k])) != base[k]]
-
-
-def settings_params(settings: dict) -> dict:
-    """IngestParams (as a dict) from the settings: each field as set, the bands from the assortment."""
-    d = dataclasses.asdict(IngestParams())
-    for k in CLIENT_FIELDS + DETECTION_FIELDS:
-        if k in settings:
-            d[k] = tuple(settings[k]) if isinstance(settings[k], list) else settings[k]
-    d["peak_months"] = tuple(sorted(int(m) for m in d["peak_months"]))
-    d.update(assortment_bands(settings.get("assortment", DEFAULT_ASSORTMENT)))
-    return d
+    ws.save_client_settings(settings, name or client())
 
 
 def settings() -> dict:

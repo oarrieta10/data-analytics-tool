@@ -71,6 +71,18 @@ def suggest_mapping(headers, table: str, params: IngestParams | None = None) -> 
         m.mapping[fname] = h
         m.method[fname] = how
         used.add(h)
+    # a required field left without a column takes back a header an optional field took (e.g. a file whose
+    # only date is "Ship Date": it is the order date, not the optional ship date)
+    required = {f.name for f in flds if f.required}
+    holder = {h: f for f, h in m.mapping.items()}
+    for fname in [f.name for f in flds if f.required and f.name not in m.mapping and f.name not in m.ambiguous]:
+        for score, _, h, how in sorted(by_field.get(fname, []), key=lambda c: -c[0]):
+            other = holder.get(h)
+            if other and other not in required:
+                del m.mapping[other], m.method[other]
+                m.mapping[fname], m.method[fname] = h, how
+                holder[h] = fname
+                break
     for fname, cs in by_field.items():
         if fname in m.mapping:
             others = [c[2] for c in cs if c[2] != m.mapping[fname] and c[2] not in used]

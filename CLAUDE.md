@@ -36,12 +36,17 @@ interactive HTML report.
   - `exports.py` rejects for the client, accepted blocks · `receipt.py` data receipt (HTML) ·
     `request_template.py` data request (HTML / Excel) from the schema
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)
+- `src/gtpfit/scope.py` — what the design is for: filters on site / channel / order status / order type / x_ extras
+  and a date window, as a saved definition (`ScopeSpec`) applied at load time; waterfall, summary, before/after
+- `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
+  Every module from quality/ onward reads through it, never from `_ingest/` directly
+- `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)
 - `src/gtpfit/app/` — local Streamlit workbench, one page per module (`python -m gtpfit.app`)
   - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files (+ client settings) → 3 Review → 4 Done (`state.py` session,
     folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
     a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
 - `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
-  date format; saved automatically), `client.yaml` (recent folders, client settings) — git-ignored; client files are never copied
+  date format; saved automatically), `client.yaml` (recent folders, client settings, `scope:`), `_scope/scope_summary.csv` — git-ignored; client files are never copied
 - `src/gtpfit/ingest/learned_synonyms.yaml` — client column names taught with "Remember this synonym" (global;
   committed; column names only, never values)
 - `tests/fixtures/` — frozen sample client (`sample_client/`, its saved column mapping, expected findings) and
@@ -53,6 +58,8 @@ After each module: add its page to the workbench with live parameter controls, l
 the user inspect and play with it before starting the next module.
 1. ~~`ingest/`~~ (done) — column mapping (saved per client), unit detection, type coercion, refusal of
    silent problems (Excel row limit, date gaps, negative qty). DuckDB for large files.
+1b. `scope` — what are we designing for: site, channel, order type / status, date window. Saved as a definition in
+   client.yaml and applied by `tables.load`; nothing is copied. Stage 3 (exclude days, per-site runs) later.
 2. `quality/` — data score weighted by lines/units/cube; placeholder, physics and outlier checks.
    How to validate it is **to be agreed** (real data has no answer key).
 3. `backfill/` — tiered: derive from other fields → KNN (category, sub-category, TF-IDF of
@@ -102,6 +109,19 @@ python -m pytest -q
   cross-client profiles: revisit after about ten clients. `--wms FILE` on the CLI still takes any profile YAML.
 - Coverage: orders should span 12 months (`min_coverage_days`) and the peak months (`peak_months`); short or
   peak-less history is a warning, not a block.
+- **Scope.** Analysis modules read `tables.load(client)`, never `_ingest/` directly. The scope is a definition
+  (`scope:` in client.yaml: included values per column, values seen when it was set, date window and basis,
+  a required note when rows are removed), applied by the pure `scope.apply_scope`; no scoped copies are written.
+  - **Columns ingest keeps for scope:** the scope fields (`orders.site / channel / order_status / order_type /
+    ship_date`, `inventory.site`, `receipts.site`), plus unmapped order text columns with at most
+    `extra_max_distinct` values, kept as `x_<name>` with values as sent.
+  - **Exclusions:** values containing `scope_exclude_keywords` start excluded ("auto-excluded"). A value that
+    first appears after a re-ingest stays out, with a warning, until the scope is reviewed.
+  - **Related tables:** the site filter also applies to inventory and receipts when they have a site column,
+    and warns when they don't. The waterfall's removed counts plus the in-scope rows always equal all rows,
+    and saving writes `_scope/scope_summary.csv`.
+- **A required field wins a contested header** (`suggest_mapping`): a file whose only date is "Ship Date" uses it
+  as the order date. Optional date fields (ship date) never block; bad values are left blank with a warning.
 - **Thresholds carry their own wording.** Each `IngestParams` field is declared with `params.setting()`:
   block (`client` / `detection`), label, unit, range, and a three-part tooltip (what it does · why the default ·
   raise / lower), plus source and confidence. The page draws its controls and tooltips from this metadata

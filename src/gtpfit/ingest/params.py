@@ -17,14 +17,15 @@ import calendar
 from dataclasses import dataclass, field, fields
 
 BLOCKS = ("client", "detection")  # Client settings (always shown) · Detection settings (collapsed)
-UNITS = ("days", "share", "x", "ratio", "months", "bool", "rows", "in", "lb/ft3")
+UNITS = ("days", "count", "share", "x", "ratio", "months", "bool", "rows", "words", "in", "lb/ft3")
 
 
 def setting(default, *, block, label, what, why, effect, unit, source, confidence, lo=None, hi=None, step=None,
             **extra):
     """A threshold plus its workbench metadata.
 
-    unit: one of UNITS ("share" is 0-1, shown as %; "rows" a list of row counts; "months" month numbers).
+    unit: one of UNITS ("share" is 0-1, shown as %; "rows" a list of row counts; "months" month numbers;
+    "count" a whole number; "words" a list of words).
     extra: via="assortment" (set by the assortment preset, not drawn alone); widget="toggle" with
     invert=True (shown as the opposite statement, e.g. "SKUs are case-sensitive").
     """
@@ -148,18 +149,27 @@ class IngestParams:
         why="a peak worth designing for stands well clear of an ordinary month",
         effect="Raise it to name only the sharpest peaks; lower it to name more months.",
         source=_CONSULTANT, confidence="low")
+    extra_max_distinct: int = setting(
+        30, block="detection", unit="count", lo=0, hi=500, step=1, label="Extra order columns kept up to",
+        what="Order columns that match no field are kept (named x_...) when they hold at most this many "
+             "different values, so the Scope step can filter on them (e.g. a pick area or carrier).",
+        why="enough for sites, channels, statuses and carriers, while order numbers, customers and free "
+            "text are left out",
+        effect="Raise it to keep columns with more values (larger outputs); lower it, or set 0, to keep fewer.",
+        source=_CONSULTANT, confidence="medium")
 
     def gap_limit(self, table: str) -> int | None:
         """Longest tolerated run of missing days for a dated table (None: not checked)."""
         return {"orders": self.max_gap_days_orders, "receipts": self.max_gap_days_receipts}.get(table)
 
 
-def meta(name: str) -> dict:
-    return dict(next(f for f in fields(IngestParams) if f.name == name).metadata)
+def meta(name: str, cls=None) -> dict:
+    """A field's setting() metadata; cls is the parameter dataclass (IngestParams by default)."""
+    return dict(next(f for f in fields(cls or IngestParams) if f.name == name).metadata)
 
 
-def block_fields(block: str) -> list[str]:
-    return [f.name for f in fields(IngestParams) if f.metadata.get("block") == block]
+def block_fields(block: str, cls=None) -> list[str]:
+    return [f.name for f in fields(cls or IngestParams) if f.metadata.get("block") == block]
 
 
 def format_value(value, unit: str) -> str:
@@ -172,6 +182,8 @@ def format_value(value, unit: str) -> str:
         return "on" if value else "off"
     if unit == "rows":
         return ", ".join(f"{v:,}" for v in value)
+    if unit == "words":
+        return ", ".join(f"“{v}”" for v in value) or "none"
     if unit in ("in", "lb/ft3"):
         shown = "lb/ft³" if unit == "lb/ft3" else unit
         return f"{value[0]:g}–{value[1]:g} {shown}"
@@ -182,10 +194,10 @@ def format_value(value, unit: str) -> str:
     return f"{value:g}"
 
 
-def tooltip(name: str) -> str:
+def tooltip(name: str, cls=None) -> str:
     """What it does. Default (from the actual default): why. What raising / lowering it does."""
-    m = meta(name)
-    d = next(f for f in fields(IngestParams) if f.name == name).default
+    m = meta(name, cls)
+    d = next(f for f in fields(cls or IngestParams) if f.name == name).default
     if m.get("invert"):
         d = not d
     return f"{m['what']}\n\nDefault {format_value(d, m['unit'])}: {m['why']}.\n\n{m['effect']}"

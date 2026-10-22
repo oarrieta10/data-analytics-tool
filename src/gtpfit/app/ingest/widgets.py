@@ -57,10 +57,11 @@ def _bands_text(name: str) -> str:
                      for k in state.BAND_FIELDS)
 
 
-def control(name: str, value, key: str):
-    """One IngestParams field as a widget, drawn from its metadata (label, unit, range) with its tooltip."""
-    m = meta(name)
-    label, unit, tip = m["label"], m["unit"], tooltip(name)
+def control(name: str, value, key: str, cls=None):
+    """One parameter field as a widget, drawn from its setting() metadata (label, unit, range) with its tooltip.
+    cls: the parameter dataclass (IngestParams by default; the Scope page passes ScopeParams)."""
+    m = meta(name, cls)
+    label, unit, tip = m["label"], m["unit"], tooltip(name, cls)
     if unit == "months":
         return sorted(st.multiselect(label, list(range(1, 13)), default=list(value), key=key, help=tip,
                                      format_func=lambda x: calendar.month_name[x]))
@@ -70,11 +71,14 @@ def control(name: str, value, key: str):
     if unit == "rows":
         txt = st.text_input(label + " (comma-separated)", ", ".join(str(x) for x in value), key=key, help=tip)
         return [int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit()]
+    if unit == "words":
+        txt = st.text_input(label + " (comma-separated)", ", ".join(value), key=key, help=tip)
+        return [w.strip() for w in txt.split(",") if w.strip()]
     if unit == "share":
         pct = st.number_input(label + " (%)", min_value=m["lo"] * 100, max_value=m["hi"] * 100,
                               value=float(value) * 100, step=m["step"] * 100, format="%.1f", key=key, help=tip)
         return round(pct / 100, 6)
-    if unit == "days":
+    if unit in ("days", "count"):
         return int(st.number_input(label, min_value=m["lo"], max_value=m["hi"], value=int(value), step=m["step"],
                                    key=key, help=tip))
     return float(st.number_input(label, min_value=float(m["lo"]), max_value=float(m["hi"]), value=float(value),
