@@ -1,11 +1,9 @@
 """workbench.py — Streamlit entry point; one page per module."""
 import streamlit as st
 
-from gtpfit.app import ingest
+from gtpfit.app import pages
 
 st.set_page_config(page_title="gtp-fit workbench", page_icon=":material/warehouse:", layout="wide")
 
-nav = st.navigation([
-    st.Page(ingest.page, title="1 · Ingest", icon=":material/input:", url_path="ingest", default=True),
-])
+nav = st.navigation(pages.ALL)
 nav.run()

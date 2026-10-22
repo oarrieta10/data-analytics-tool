@@ -34,6 +34,11 @@ def show() -> None:
                        f"{state.client()}_data_receipt.html", "text/html", key="ing::dl_receipt4")
     c2.download_button("Download rejects", (out / "rejects_for_client.csv").read_bytes(),
                        f"{state.client()}_rejects.csv", "text/csv", key="ing::dl_rej4")
+    if st.button("Continue to Scope →", type="primary", key="ing::to_scope",
+                 help="Decide which sites, channels and order types the design is for."):
+        st.session_state["scp::client"] = state.client()
+        from gtpfit.app import pages
+        st.switch_page(pages.SCOPE)
     if c3.button("Start another client", key="ing::restart"):
         state.reset()
         state.go(1)

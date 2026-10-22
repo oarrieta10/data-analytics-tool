@@ -121,3 +121,92 @@ def test_every_scope_param_has_metadata():
             assert isinstance(m.get(k), str) and m[k].strip(), (f.name, k)
         assert m["block"] in BLOCKS and m["unit"] in UNITS
         assert tooltip(f.name, ScopeParams).startswith(m["what"])
+
+
+# ---- stage 1: what can be filtered, the waterfall, saving -------------------------------------------------
+
+def test_detect_known_fields_first_then_extras(ingested):
+    from gtpfit.scope import detect_scope_columns
+    cols = detect_scope_columns(ingested.tables["orders"])
+    names = [c.name for c in cols]
+    assert names[:4] == ["site", "channel", "order_status", "order_type"] and names[4:] == ["x_carrier"]
+    site = cols[0]
+    assert {v.value for v in site.values} == {"DC-East", "DC-West"}
+    assert sum(v.lines for v in site.values) == len(ingested.tables["orders"])
+    assert abs(sum(v.share for v in site.values) - 1) < 1e-9
+
+
+def test_auto_exclusion_ignores_case(ingested):
+    from gtpfit.scope import ScopeParams, default_spec, detect_scope_columns
+    status = next(c for c in detect_scope_columns(ingested.tables["orders"]) if c.name == "order_status")
+    auto = {v.value: v.auto_excluded for v in status.values}
+    assert auto == {"Shipped": None, "CANCELLED": "cancel", "Returned": "return"}
+    assert default_spec(detect_scope_columns(ingested.tables["orders"])).include == {"order_status": ["Shipped"]}
+    none = detect_scope_columns(ingested.tables["orders"], ScopeParams(scope_exclude_keywords=()))
+    assert not any(v.auto_excluded for c in none for v in c.values)
+
+
+def _east_shipped():
+    from gtpfit.scope import ScopeSpec
+    return ScopeSpec(include={"site": ["DC-East"], "order_status": ["Shipped"]}, note="DC-East, shipped only")
+
+
+def test_waterfall_adds_up(ingested):
+    from gtpfit.scope import ScopeSpec, apply_scope
+    spec = ScopeSpec(include={"site": ["DC-East"], "order_status": ["Shipped"]}, date_from="2025-02-01",
+                     date_to="2025-12-31")
+    r = apply_scope(ingested.tables, spec)
+    w = r.waterfall
+    n = len(ingested.tables["orders"])
+    assert w["filter"].iat[0] == "All lines" and w["remaining"].iat[0] == n and w["filter"].iat[-1] == "In scope"
+    assert w["removed"].sum() + w["remaining"].iat[-1] == n
+    assert len(r.tables["orders"]) == w["remaining"].iat[-1]
+    assert (w["remaining"].diff().fillna(0).iloc[1:-1] == -w["removed"].iloc[1:-1]).all()
+    assert r.summary["rows_removed"].sum() >= w["removed"].sum()  # + the related tables' rows
+    reasons = set(r.summary.reason)
+    assert "excluded by the consultant" in reasons and "outside the date window" in reasons
+    assert any(x.startswith("auto-excluded") for x in reasons)
+
+
+def test_site_filter_reaches_related_tables(ingested):
+    from gtpfit.scope import apply_scope
+    r = apply_scope(ingested.tables, _east_shipped())
+    assert set(r.tables["inventory"]["site"]) == {"DC-East"}
+    assert len(r.tables["receipts"]) == len(ingested.tables["receipts"])  # no site column: all kept
+    assert "No site column in receipts; sizing will use all sites' receipts." in r.warnings
+    assert r.related["inventory"].startswith("site column found")
+    assert len(r.tables["item_master"]) == len(ingested.tables["item_master"])
+
+
+def test_saved_spec_reloads_and_gives_identical_tables(ws, ingested):
+    from gtpfit import tables
+    from gtpfit.scope import apply_scope, load_scope, save_scope
+    client = _ingest_into(ws, ingested)
+    save_scope(client, _east_shipped())
+    assert load_scope(client).include == _east_shipped().include and load_scope(client).saved_at
+    assert load_scope("Beta") is None
+    a = tables.load(client)["orders"]
+    b = apply_scope(tables.load_unscoped(client), _east_shipped()).tables["orders"]
+    pd.testing.assert_frame_equal(a, b)
+    summary = pd.read_csv(ws / client / "_scope" / "scope_summary.csv")
+    assert list(summary.columns) == ["filter", "value", "rows_removed", "reason"]
+    assert summary.loc[summary.value == "DC-West", "rows_removed"].iat[0] > 0
+
+
+def test_missing_and_new_values_warn_instead_of_failing(ingested):
+    from gtpfit.scope import ScopeSpec, apply_scope
+    gone = apply_scope(ingested.tables, ScopeSpec(include={"site": ["DC-East", "DC-North"]}))
+    assert any("no longer in the data: DC-North" in w for w in gone.warnings)
+    new = apply_scope(ingested.tables, ScopeSpec(include={"site": ["DC-East"]}, seen={"site": ["DC-East"]}))
+    assert any("New Site / warehouse value(s)" in w and "DC-West" in w for w in new.warnings)
+    assert "not in the saved scope (new value)" in set(new.summary.reason)
+    skipped = apply_scope(ingested.tables, ScopeSpec(include={"x_zone": ["A"]}))
+    assert any("no longer have" in w for w in skipped.warnings) and skipped.lines_in == skipped.lines_all
+
+
+def test_ship_date_basis_drops_unshipped_with_a_reason(ingested):
+    from gtpfit.scope import ScopeSpec, apply_scope
+    r = apply_scope(ingested.tables, ScopeSpec(date_from="2025-01-01", date_to="2026-12-31", date_basis="ship_date"))
+    cancelled = int((ingested.tables["orders"]["order_status"] == "CANCELLED").sum())
+    row = r.summary[r.summary.value == "no ship date"]
+    assert int(row.rows_removed.iat[0]) == cancelled
