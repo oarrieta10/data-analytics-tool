@@ -8,7 +8,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from gtpfit.ingest.checks import explain
+from gtpfit.ingest.checks import NOT_ACCEPTABLE, explain
 from gtpfit.ingest.coverage import sparkline_svg
 from gtpfit.ingest.coverage import OUTSIDE_NOTE
 from gtpfit.ingest.params import ASSORTMENTS, assortment_tooltip, format_value, meta, tooltip
@@ -212,12 +212,17 @@ def block_cards(result) -> None:
                              help="Records the request (it appears in the data receipt); the block stays open."):
                     requested.remove(key) if asked else requested.append(key)
                     st.rerun()
-                with c2.expander("Accept anyway…"):
-                    why = st.text_input("Reason (required)", key=f"accwhy::{key}",
-                                        placeholder="e.g. client confirmed the extract is complete")
-                    if st.button("Confirm", key=f"accok::{key}", disabled=not why.strip()):
-                        accept[key] = {"reason": why.strip(), "at": dt.datetime.now().isoformat(timespec="seconds")}
-                        st.rerun()
+                if first.code in NOT_ACCEPTABLE:  # accepting would pass the sizes through unconverted
+                    c2.caption("This block can't be accepted as it is: the sizes would go through unconverted, "
+                               "read as inches and pounds. Choose the units above, or ask the client.")
+                else:
+                    with c2.expander("Accept anyway…"):
+                        why = st.text_input("Reason (required)", key=f"accwhy::{key}",
+                                            placeholder="e.g. client confirmed the extract is complete")
+                        if st.button("Confirm", key=f"accok::{key}", disabled=not why.strip()):
+                            accept[key] = {"reason": why.strip(),
+                                           "at": dt.datetime.now().isoformat(timespec="seconds")}
+                            st.rerun()
             else:
                 a = accept.get(key) or accept.get(first.code) or {}
                 st.markdown(f"Accepted: *{a.get('reason', '')}* ({a.get('at', '')})")

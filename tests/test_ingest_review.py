@@ -254,6 +254,31 @@ def test_cli_accept_needs_code_equals_reason(tmp_path, capsys):
     assert pd.read_csv(tmp_path / "o2" / "accepted_blocks.csv")["reason"].iat[0] == "closed for stocktake"
 
 
+def test_unit_blocks_cannot_be_accepted(tmp_path, capsys):
+    from gtpfit.ingest.checks import NOT_ACCEPTABLE, normalise_accept
+    from gtpfit.ingest.cli import main
+    assert set(NOT_ACCEPTABLE) == {"unit_ambiguous", "unit_mismatch"}
+    for key in ("unit_ambiguous", "item_master:unit_ambiguous", "item_master:unit_mismatch"):
+        with pytest.raises(ValueError, match="cannot be accepted"):
+            normalise_accept({key: "looked fine to me"})
+    with pytest.raises(SystemExit) as e:
+        main([str(_gap_folder(tmp_path)), "--accept", "item_master:unit_ambiguous=looked fine",
+              "--out", str(tmp_path / "o")])
+    assert e.value.code == 2 and "cannot be accepted" in capsys.readouterr().out
+
+
+def test_unit_messages_name_the_assortment_ranges():
+    from gtpfit.app.ingest.state import default_settings, settings_params
+    from gtpfit.ingest.units import expected_ranges
+    consumer = expected_ranges("unit", IngestParams())
+    assert "4–36 in" in consumer and "2–40 lb/ft3" in consumer and "consumer goods" not in consumer
+    assert "8–48 in" in expected_ranges("case", IngestParams())
+    industrial = IngestParams(**settings_params({**default_settings(), "assortment": "industrial"}))
+    assert "4–150 lb/ft3" in expected_ranges("unit", industrial)
+    src = (ROOT / "src" / "gtpfit" / "ingest" / "pipeline.py").read_text(encoding="utf-8")
+    assert "consumer goods" not in src  # the ranges depend on the assortment chosen
+
+
 # ---- 5. progress --------------------------------------------------------------------------------
 
 def test_progress_reports_each_table():

@@ -306,6 +306,11 @@ def test_unit_decision_persists_per_client(tmp_path, monkeypatch, learned):
     at = _next(_app(tmp_path, monkeypatch, folder=folder), "ing::run")
     key = "item_master:unit_ambiguous"
     assert any("BLOCKED" in e.value for e in at.error)
+    # no "Accept anyway" here: accepting would pass the sizes through unconverted
+    assert not [w for w in at.text_input if w.key == f"accwhy::{key}"]
+    assert not [b for b in at.button if b.key == f"accok::{key}"]
+    assert any("can't be accepted" in c.value for c in at.caption)
+    assert at.button(key=f"req::{key}")  # asking the client is still possible
     pick = at.selectbox(key=f"unitpick::{key}")
     assert any(o.startswith("cm / kg") for o in pick.options)
     pick.select(next(o for o in pick.options if o.startswith("cm / kg"))).run()
@@ -506,6 +511,9 @@ def test_unit_decision_rereads_only_the_item_master(tmp_path, monkeypatch, learn
     im[["Unit Weight", "Case Weight"]] = (im[["Unit Weight", "Case Weight"]] / 2.20462262185).round(3)
     at = _next(_app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client", item_master=im)), "ing::run")
     assert sorted(reads) == sorted(FILES)  # the first run reads every file once
+    # the progress bar is drawn in the page's top bar, fixed in place
+    css = " ".join(m.value for m in at.markdown if "st-key-ing-progress" in m.value)
+    assert "position: fixed" in css and "top: 0.6rem" in css
     key = "item_master:unit_ambiguous"
     pick = at.selectbox(key=f"unitpick::{key}")
     pick.select(next(o for o in pick.options if o.startswith("cm / kg"))).run()

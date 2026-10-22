@@ -93,6 +93,8 @@ python -m pytest -q
 - Ingest severities: `block` (refuse unless accepted **with a reason**: `accept={"table:code": reason}`;
   the reason goes to `accepted_blocks.csv` and the data receipt) · `warn` · `info`. Rows are never dropped
   silently — they go to `rejects` with a reason. Every issue code needs an `ISSUE_TEXT` entry (a test checks).
+  Unit blocks (`unit_ambiguous`, `unit_mismatch`) cannot be accepted (`checks.NOT_ACCEPTABLE`): accepting would
+  pass sizes through unconverted, read as inches and pounds. They are resolved by choosing or declaring units.
 - **Mappings are per client and automatic** (no WMS-profile picker, no save button). The confirmed column
   mapping, units and date format are saved to the client's `wms_<client>.yaml`; a new file whose headers
   overlap the saved ones (`mapping_reuse_min_overlap`) reuses it ("using last confirmed mapping"). A hand

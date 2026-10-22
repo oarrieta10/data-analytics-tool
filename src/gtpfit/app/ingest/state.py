@@ -363,6 +363,22 @@ def _cached_table(sources, table, profile, params, accept):
     return cache[key]
 
 
+# The progress bar sits in the page's top bar (level with Deploy and the ⋮ menu), fixed there so it stays
+# in view wherever the page is scrolled.  The header is z-index 999990 in Streamlit; this goes above it.
+_HEADER_PROGRESS_CSS = """<style>
+.st-key-ing-progress {position: fixed; top: 0.6rem; left: 50%; transform: translateX(-50%);
+  width: min(40vw, 520px); z-index: 1000000; gap: 0;}
+.st-key-ing-progress p {font-size: 0.85rem; margin: 0;}
+</style>"""
+
+
+def header_progress(text: str):
+    """A progress bar shown in the top bar of the page (see _HEADER_PROGRESS_CSS)."""
+    st.markdown(_HEADER_PROGRESS_CSS, unsafe_allow_html=True)
+    with st.container(key="ing-progress"):
+        return st.progress(0.0, text=text)
+
+
 def run_ingest(spec: dict, files, expected_rows: dict | None = None):
     """Ingest with a progress bar, without acceptances (apply them with apply_acceptances).  Whole runs are
     kept per run key so going back and forth is instant; tables whose inputs did not change are not re-read."""
@@ -376,7 +392,7 @@ def run_ingest(spec: dict, files, expected_rows: dict | None = None):
     profile = parse_wms_profile(yaml.safe_load(spec["profile"]) or {}) if spec["profile"] else None
     p = IngestParams(**params_from_json(json.dumps(spec["params"])))  # tuples back from any lists
     cache = ss().setdefault("ing::table_runs", {})
-    bar = st.progress(0.0, text="Starting ingest…")
+    bar = header_progress("Starting ingest…")
 
     def tick(e):
         label = TABLE_LABEL.get(e["table"], e["table"])

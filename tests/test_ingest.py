@@ -219,6 +219,8 @@ def test_profile_says_inches_but_data_is_cm_blocks(ds, tmp_path):
     folder = _clone(ds, tmp_path, item_master=_metric_item_master(ds, hints=False))
     r = ingest_folder(folder, profile=load_wms_profile(WMS), strict=False)
     assert "unit_mismatch" in _codes(r, "block")
+    msg = r.issues.loc[r.issues.code == "unit_mismatch", "message"].iat[0]
+    assert "expected ranges for this assortment" in msg and "consumer goods" not in msg
 
 
 # ---- readers ----------------------------------------------------------------

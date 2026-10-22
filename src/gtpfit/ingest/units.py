@@ -4,8 +4,9 @@ Decided per group of columns ("unit" = each dims + weight, "case" = case dims +
 weight), in this order:
     1. a unit written in the header, e.g. "Length (cm)"
     2. the unit declared in the WMS profile
-    3. the data: the one unit pair whose median size and density look like
-       consumer goods (params.*_longest_side_in, params.density_lb_ft3)
+    3. the data: the one unit pair whose median size and density fall inside the
+       ranges for the client's assortment type (params.*_longest_side_in,
+       params.density_lb_ft3, set together by params.ASSORTMENTS)
 The data check also runs on declared units and refuses a declaration the
 numbers contradict.  It cannot separate every pair (in/lb vs cm/oz give nearly
 the same density), so when more than one pair fits and nothing is declared,
@@ -59,6 +60,14 @@ def _stats(df: pd.DataFrame, dims: list, weight: str | None, lu: str, wu: str):
                 if good.any():
                     density = float(np.median(w[good] / vol[good]))
     return longest, density
+
+
+def expected_ranges(group: str, params: IngestParams) -> str:
+    """The ranges a unit pair is judged against, in words (they come from the assortment type)."""
+    side = params.unit_longest_side_in if group == "unit" else params.case_longest_side_in
+    d = params.density_lb_ft3
+    return (f"the expected ranges for this assortment (median longest side {side[0]:g}–{side[1]:g} in, "
+            f"median density {d[0]:g}–{d[1]:g} lb/ft3)")
 
 
 def assess(df: pd.DataFrame, dims: list, weight: str | None, group: str, params: IngestParams) -> pd.DataFrame:

@@ -187,10 +187,19 @@ def explain(code: str) -> IssueText:
 
 # ---- accepting blocks: only with a reason --------------------------------------------------------
 
+# Blocks that cannot be accepted, with what to do instead.  Accepting a unit block would let the sizes and
+# weights through unconverted, read as inches and pounds whatever they really are.
+NOT_ACCEPTABLE = {
+    "unit_ambiguous": "choose the units (workbench), declare them in the WMS profile or name them in the headers",
+    "unit_mismatch": "choose the units that fit (workbench) or correct the WMS profile",
+}
+
+
 def normalise_accept(accept) -> dict:
     """{key: {"reason", "at"}} from {key: reason} or {key: {"reason", "at"}}; key = "code" or "table:code".
 
-    A list of bare codes, or a blank reason, is refused: a block is accepted only with a reason.
+    A list of bare codes, or a blank reason, is refused: a block is accepted only with a reason.  So is a
+    block in NOT_ACCEPTABLE, which must be resolved instead.
     """
     if not accept:
         return {}
@@ -198,6 +207,9 @@ def normalise_accept(accept) -> dict:
         raise ValueError(f"Accepting blocks needs a reason for each: pass {{code: reason}}, not {list(accept)}.")
     out = {}
     for key, v in accept.items():
+        code = str(key).split(":")[-1]
+        if code in NOT_ACCEPTABLE:
+            raise ValueError(f"'{key}' cannot be accepted: {NOT_ACCEPTABLE[code]}.")
         rec = dict(v) if isinstance(v, dict) else {"reason": v}
         reason = str(rec.get("reason") or "").strip()
         if not reason:

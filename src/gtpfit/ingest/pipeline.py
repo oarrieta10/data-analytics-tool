@@ -41,6 +41,7 @@ from .read import read_headers, read_raw
 from .readers import Source, as_source
 from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
+from .units import expected_ranges as _expected
 
 _DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
 
@@ -371,7 +372,7 @@ def _units(out, m, profile, params, add):
             chosen = row
             if row.evidence and not row.plausible:
                 if len(fits):
-                    add("unit_mismatch", "block", f"{g}: declared {describe(row)} looks wrong for consumer goods; "
+                    add("unit_mismatch", "block", f"{g}: declared {describe(row)} falls outside {_expected(g, params)}; "
                         f"the data fits {fits_txt}.")
                     chosen = None
                 else:
@@ -390,7 +391,7 @@ def _units(out, m, profile, params, add):
                     ". Declare units in the WMS profile or the headers.")
             else:
                 add("unit_ambiguous", "block", f"{g}: {', '.join(undeclared)} unit not stated and no unit pair "
-                    f"looks like consumer goods (fits overall: {fits_txt}). Declare units.")
+                    f"falls inside {_expected(g, params)} (fits overall: {fits_txt}). Declare units.")
         if chosen is None:
             continue
         lu, wu = chosen.length, chosen.weight

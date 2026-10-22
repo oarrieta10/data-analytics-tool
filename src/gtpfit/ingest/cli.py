@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from .checks import NOT_ACCEPTABLE
 from .mapping import load_wms_profile
 from .pipeline import ingest_folder, write_outputs
 
@@ -23,6 +24,10 @@ def _accept_arg(items) -> dict:
         key, sep, reason = item.partition("=")
         if not sep or not reason.strip():
             print(f"--accept {item}: give a reason, e.g. --accept \"{key}=client confirmed the extract is complete\"")
+            sys.exit(2)
+        code = key.strip().split(":")[-1]
+        if code in NOT_ACCEPTABLE:
+            print(f"--accept {key.strip()}: this block cannot be accepted; {NOT_ACCEPTABLE[code]}.")
             sys.exit(2)
         out[key.strip()] = reason.strip()
     return out
