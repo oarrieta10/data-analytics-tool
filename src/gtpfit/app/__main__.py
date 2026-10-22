@@ -10,6 +10,7 @@ def main():
         port = sys.argv[sys.argv.index("--port") + 1]
     app = Path(__file__).with_name("workbench.py")
     sys.argv = ["streamlit", "run", str(app), "--server.port", port, "--server.headless", "true",
+                "--server.enableStaticServing", "true",  # app/static/: the HAI loader and three.js
                 "--browser.gatherUsageStats", "false"]
     sys.exit(cli.main())
 
