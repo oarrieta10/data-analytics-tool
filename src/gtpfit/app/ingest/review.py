@@ -64,7 +64,8 @@ def show() -> None:
                        f"{state.client()}_data_receipt.html", "text/html", key="ing::dl_receipt")
     if c3.button("← Back", key="ing::back2"):
         state.go(2)
-    if c4.button("Continue to Quality →", type="primary", key="ing::to4", disabled=r.blocked):
+    if c4.button("Finish ingest →", type="primary", key="ing::to4", disabled=r.blocked,
+                 help="Writes the outputs and the data receipt to the client's workspace; Scope comes next."):
         st.session_state["ing::final"] = dict(result=r, detections=dets,
                                               requested=list(st.session_state.get("ing::requested", [])))
         state.go(4)
