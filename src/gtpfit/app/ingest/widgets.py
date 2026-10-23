@@ -111,6 +111,15 @@ def control(name: str, value, key: str, cls=None):
     if unit == "rows":
         txt = st.text_input(label + " (comma-separated)", ", ".join(str(x) for x in value), key=key, help=tip)
         return [int(x) for x in txt.replace(" ", "").split(",") if x.strip().isdigit()]
+    if unit == "numbers":
+        txt = st.text_input(label + " (comma-separated)", ", ".join(f"{v:g}" for v in value), key=key, help=tip)
+        vals = []
+        for x in txt.split(","):
+            try:
+                vals.append(float(x))
+            except ValueError:
+                pass
+        return vals
     if unit == "words":
         txt = st.text_input(label + " (comma-separated)", ", ".join(value), key=key, help=tip)
         return [w.strip() for w in txt.split(",") if w.strip()]

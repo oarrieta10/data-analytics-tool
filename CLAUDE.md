@@ -9,6 +9,9 @@ interactive HTML report.
 ## Ground rules
 - **Clean-room build.** Do not copy code, DAX, M, reference tables or data from any previous
   employer's tools. Methods are general industry practice; implementations are written fresh here.
+- **Develop and validate on real client data, locally.** From quality/ on, modules are built, tuned and checked on
+  the real clients in `data/real/` (git-ignored; ingested and scoped into `data/workspace/`). Committed tests use
+  small hand-built frames and the synthetic fixtures; real-data tests skip when `data/real/` is absent.
 - **No real client data in the repo.** Tests use the frozen sample client in `tests/fixtures/`
   (made once by the separate synthetic-data-tool; this repo has no generator and does not depend on
   it). `data/` is git-ignored; real client files stay on the consultant's laptop.
@@ -38,6 +41,11 @@ interactive HTML report.
 - `src/gtpfit/lines.py` — order-line definitions (a per-client choice, see Conventions)
 - `src/gtpfit/scope.py` — what the design is for: filters on site / channel / order status / order type / x_ extras
   and a date window, as a saved definition (`ScopeSpec`) applied at load time; waterfall, summary, before/after
+- `src/gtpfit/quality/` — can we trust the item data: `checks.py` (flags per SKU: missing, placeholder, copied size,
+  physics against the assortment's bands, case vs units, unit slips, peer outliers, duplicates, orphans),
+  `peers.py` (sub-category → category → all, robust z in log space), `status.py` (status, readiness for unit / case
+  fit, weighted score, items to measure), `text.py` (`QUALITY_TEXT`), `params.py` (`QualityParams`). Reads
+  `tables.load` only; writes `data/workspace/<client>/_quality/`; never changes a value
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)
@@ -64,8 +72,10 @@ the user inspect and play with it before starting the next module.
    silent problems (Excel row limit, date gaps, negative qty). DuckDB for large files.
 1b. `scope` — what are we designing for: site, channel, order type / status, date window. Saved as a definition in
    client.yaml and applied by `tables.load`; nothing is copied. Stage 3 (exclude days, per-site runs) later.
-2. `quality/` — data score weighted by lines/units/cube; placeholder, physics and outlier checks.
-   How to validate it is **to be agreed** (real data has no answer key).
+2. `quality/` — data score: share of in-scope lines / units / on-hand (and SKUs) carried by SKUs whose data is usable
+   for unit fit and for case fit. **Never weighted by cube**: an item with bad sizes has no trustworthy cube.
+   Validated on real clients without an answer key: self-test (plant known defects into the client's own clean SKUs
+   → recall) and consultant review of sampled flags (→ precision).
 3. `backfill/` — tiered: derive from other fields → KNN (category, sub-category, TF-IDF of
    description, case dims/weight; log space) → category median. Every value tagged with method and
    confidence. Validation **to be agreed**; masked holdout on real item masters (hide known values,
