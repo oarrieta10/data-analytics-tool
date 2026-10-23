@@ -46,7 +46,8 @@ interactive HTML report.
     folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
     a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
   - `app/loader.py` the HAI robot loading animation in the middle of the screen while a page works (replaces
-    Streamlit's running icon); `app/static/` serves it and three.js locally (see its README)
+    Streamlit's running icon); `app/theme.py` Hai Blue accent and the Hai Robotics logo (top left), from the
+    Hai Robotics design system; `app/static/` serves the loader, three.js and the logo files locally (see its README)
 - `vendor/` — third-party / HAI-supplied files kept as received (e.g. the loader zip); see its README
 - `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
   date format; saved automatically), `client.yaml` (recent folders, client settings, `scope:`), `_scope/scope_summary.csv` — git-ignored; client files are never copied

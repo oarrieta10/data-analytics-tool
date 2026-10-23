@@ -64,3 +64,34 @@ def test_theme_flags_are_known_to_streamlit():
     config.get_config_options()
     for flag in theme.streamlit_flags()[::2]:
         assert flag[2:] in config._config_options, flag
+
+
+# ---- the Hai Robotics logo, top left (Hai Robotics design system) ----------------------------------------
+
+def test_logo_files_are_the_design_system_artwork():
+    import hashlib
+    brand = STATIC / "brand"
+    sha = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in brand.glob("*.svg")}
+    assert sha == {  # exactly as downloaded from the design system's Logos group: never redrawn or recoloured
+        "hai-robotics-primary.svg": "356374f07e4a754e595fa39f026e9b2263a90c6030992c43d345d9ce7cfb77cf",
+        "hai-robotics-primary-reverse.svg": "a6814bbe84d255b6ada2c67a64d19c7019ad449cac2630cd47012c35afcd3667"}
+    for p in brand.glob("*.svg"):
+        svg = p.read_text(encoding="utf-8").lower()
+        assert "<script" not in svg and "href" not in svg and "url(" not in svg
+
+
+def test_logo_follows_the_theme():
+    from gtpfit.app import theme
+    assert theme.logo_file("light").name == "hai-robotics-primary.svg"
+    assert theme.logo_file("dark").name == "hai-robotics-primary-reverse.svg"   # white on dark grounds
+    assert theme.logo_file(None).name == "hai-robotics-primary.svg"
+
+
+def test_workbench_shows_the_logo(tmp_path, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_string("from gtpfit.app import theme\ntheme.logo()\n")
+    at.run()
+    assert not at.exception, at.exception
+    assert "theme.logo()" in (APP / "workbench.py").read_text(encoding="utf-8")
