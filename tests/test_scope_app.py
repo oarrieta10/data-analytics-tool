@@ -158,3 +158,15 @@ def test_impact_tiles_and_coverage_recheck(tmp_path, monkeypatch, scope_result):
     warns = " ".join(w.value for w in at.warning)
     assert "Orders cover" in warns and "No orders in Nov, Dec" in warns  # DC-West: Mar-Sep only
     assert "Busiest months in this data" in _text(at)
+
+
+def test_skip_scope_saves_all_rows_on_purpose(tmp_path, monkeypatch, scope_result):
+    from gtpfit import tables
+    from gtpfit.scope import load_scope
+    client = _ingested(tmp_path, scope_result)
+    at = _page(tmp_path, monkeypatch, client)
+    at.button(key="scp::skip").click().run()
+    assert not at.exception, at.exception
+    spec = load_scope(client)
+    assert spec.skipped and spec.include == {} and spec.note
+    assert len(tables.load(client)["orders"]) == len(scope_result.tables["orders"])

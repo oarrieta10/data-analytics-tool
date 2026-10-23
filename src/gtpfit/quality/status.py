@@ -75,7 +75,6 @@ def sku_status(im: pd.DataFrame, flags: pd.DataFrame, weights: pd.DataFrame, pee
     problems = flags[flags["severity"].isin(["unusable", "suspect", "orphan"])]
     worst = problems.assign(r=problems["severity"].map(SEVERITY_RANK)).sort_values("r").drop_duplicates("sku")
     base["status"] = base["sku"].map(worst.set_index("sku")["severity"]).fillna("ok")
-    base["problems"] = base["sku"].map(problems.groupby("sku")["code"].agg(lambda s: ", ".join(dict.fromkeys(s))))
     unus = flags[flags["severity"].isin(["unusable", "orphan"])]
     unit_bad = set(unus.loc[unus["field"].isin(UNIT_FIELDS | {"*"}), "sku"])
     case_bad = set(unus.loc[unus["field"].isin(CASE_FIELDS | {"*"}), "sku"])
@@ -91,6 +90,9 @@ def sku_status(im: pd.DataFrame, flags: pd.DataFrame, weights: pd.DataFrame, pee
     for c in ("lines", "units", "on_hand"):
         base[c] = base[c].fillna(0.0) if c in base else 0.0
     base["bucket"] = ((base["lines"] > 0) | (base["on_hand"] > 0)).map({True: "active", False: INACTIVE})
+    # the problem codes, listed for active SKUs (the flags table has every SKU's)
+    act = problems[problems["sku"].isin(set(base.loc[base["bucket"] == "active", "sku"]))]
+    base["problems"] = base["sku"].map(act.drop_duplicates(["sku", "code"]).groupby("sku")["code"].agg(", ".join))
     return base
 
 
@@ -128,8 +130,10 @@ def items_to_measure(status: pd.DataFrame, flags: pd.DataFrame) -> pd.DataFrame:
     """Unusable, suspect and orphan SKUs with in-scope activity, ranked by lines, with the gap closed so far."""
     bad = status[status["status"].isin(["unusable", "suspect", "orphan"]) & (status["bucket"] == "active")].copy()
     total_lines = float(status.loc[status["bucket"] == "active", "lines"].sum()) or 1.0
-    probs = flags[flags["severity"].isin(["unusable", "suspect", "orphan"])]
-    by_sku = probs.groupby("sku").apply(lambda f: list(zip(f["code"], f["field"])), include_groups=False)
+    probs = flags[flags["severity"].isin(["unusable", "suspect", "orphan"]) & flags["sku"].isin(set(bad["sku"]))]
+    by_sku = {}
+    for s_, c, fld in zip(probs["sku"], probs["code"], probs["field"]):
+        by_sku.setdefault(s_, []).append((c, fld))
     texts = {}
     for s, pairs in by_sku.items():
         codes = [c for c, _ in pairs]

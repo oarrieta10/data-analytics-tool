@@ -42,14 +42,16 @@ class QualityResult:
 def _problems(flags: pd.DataFrame, status: pd.DataFrame) -> list[dict]:
     """One row per code: SKUs, share of in-scope lines they carry, severity."""
     total = float(status.loc[status["bucket"] == "active", "lines"].sum()) or 1.0
-    lines = status.set_index("sku")["lines"]
+    lines = status.drop_duplicates("sku").set_index("sku")["lines"]
+    active = set(status.loc[status["bucket"] == "active", "sku"])
     out = []
     for code in CODES:
         skus = flags.loc[flags["code"] == code, "sku"].unique()
         if not len(skus):
             continue
         out.append({"code": code, "title": QUALITY_TEXT[code].title, "severity": CODE_SEVERITY[code],
-                    "skus": int(len(skus)), "share_of_lines": float(lines.reindex(skus).fillna(0).sum() / total)})
+                    "skus": int(len(skus)), "skus_active": int(sum(1 for s in skus if s in active)),
+                    "share_of_lines": float(lines.reindex(skus).fillna(0).sum() / total)})
     return out
 
 

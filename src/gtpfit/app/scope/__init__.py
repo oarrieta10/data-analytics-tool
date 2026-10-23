@@ -17,7 +17,7 @@ import streamlit as st
 from gtpfit import workspace
 from gtpfit.ingest.coverage import OUTSIDE_NOTE, busiest_months, coverage
 from gtpfit.scope import (ScopeParams, ScopeSpec, apply_scope, default_spec, detect_scope_columns, impact,
-                          params_diff, save_scope)
+                          load_scope, params_diff, save_scope)
 
 from . import state
 
@@ -26,7 +26,7 @@ _DAYS_12M = 365  # "Last 12 months": the window ending on the last order date
 
 def _header() -> str | None:
     ready = state.ready_clients()
-    st.title("2 · Scope")
+    st.title("1b · Scope")
     st.caption("What are we designing for? Pick the sites, channels and order types the design must serve. "
                "Everything after this step (quality, profile, sizing) sees only the rows in scope.")
     if not ready:
@@ -216,7 +216,7 @@ def page() -> None:
                                                     help=suggestion):
             st.session_state["scp::note"] = suggestion
             st.rerun()
-    c1, c2, _ = st.columns([1, 1.6, 3])
+    c1, c2, c3, _ = st.columns([1, 1.6, 2.2, 1.5])
     if c1.button("Reset", key="scp::reset", help="Back to every value in, except the auto-excluded ones."):
         state.forget_widgets()
         st.session_state[f"scp::start::{name}"] = default_spec(cols, params)
@@ -228,6 +228,13 @@ def page() -> None:
         st.success(f"Scope saved for **{name}** ({res.lines_in:,} of {res.lines_all:,} order lines in scope). "
                    f"Every module from Quality on reads only these rows. What was left out is listed in "
                    f"`{workspace.client_dir(name) / '_scope' / 'scope_summary.csv'}`.", icon="✅")
+    if c3.button("Skip scope (use all rows)", key="scp::skip",
+                 help="Design for every row ingest kept, on purpose. Quality opens either way."):
+        save_scope(name, ScopeSpec(skipped=True, note="All rows: no scope set.",
+                                   seen={c.name: [v.value for v in c.values] for c in cols}))
+        st.session_state[f"scp::start::{name}"] = load_scope(name)
+        st.success(f"No scope for **{name}**: every module from Quality on uses all {res.lines_all:,} order "
+                   "lines.", icon="✅")
     if blocked:
         st.caption("Write a scope note to save: it explains to the report's readers what was left out.")
     _detection_settings()

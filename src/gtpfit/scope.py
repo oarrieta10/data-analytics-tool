@@ -136,6 +136,7 @@ class ScopeSpec:
     note: str = ""
     saved_at: str = ""
     params: dict = field(default_factory=dict)    # ScopeParams values that differ from the defaults
+    skipped: bool = False                         # saved with "Skip scope": every row, on purpose
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
