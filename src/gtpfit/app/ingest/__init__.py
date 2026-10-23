@@ -15,6 +15,7 @@ _SCREENS = {1: upload.show, 2: confirm.show, 3: review.show, 4: done.show}
 
 
 def page() -> None:
+    state.progress_slot()  # first, every run: a fixed place for the top-bar progress bar
     st.title("1 · Ingest")
     step = st.session_state.setdefault("ing::step", 1)
     widgets.stepper(step)

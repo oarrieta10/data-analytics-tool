@@ -320,11 +320,23 @@ _HEADER_PROGRESS_CSS = """<style>
 </style>"""
 
 
-def header_progress(text: str):
-    """A progress bar shown in the top bar of the page (see _HEADER_PROGRESS_CSS)."""
+def progress_slot() -> None:
+    """Reserve the top-bar progress box at the top of the page, on every run, empty until needed.
+
+    Its place in the page must never change between runs: Streamlit keeps an element's previous contents on
+    screen until a run ends, so a box created only on some runs takes over whatever sat in that place before
+    (e.g. a block card) and shows it, fixed, over the top bar for the whole run."""
     st.markdown(_HEADER_PROGRESS_CSS, unsafe_allow_html=True)
-    with st.container(key="ing-progress"):
-        return st.progress(0.0, text=text)
+    ss()["ing::progress_slot"] = st.container(key="ing-progress").empty()
+
+
+def header_progress(text: str):
+    """A progress bar in the top bar of the page, drawn in the slot progress_slot() reserved."""
+    slot = ss().get("ing::progress_slot")
+    if slot is None:  # not reserved (e.g. a test calling run_ingest directly): reserve it here
+        progress_slot()
+        slot = ss()["ing::progress_slot"]
+    return slot.progress(0.0, text=text)
 
 
 def run_ingest(spec: dict, files, expected_rows: dict | None = None):

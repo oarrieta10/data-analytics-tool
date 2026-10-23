@@ -521,6 +521,27 @@ def test_unit_decision_rereads_only_the_item_master(tmp_path, monkeypatch, learn
     at = _next(at, f"unituse::{key}")
     assert reads == ["item_master.csv"]
     assert not [e for e in at.error if "BLOCKED" in e.value]
+    _progress_box_first(at)
+
+
+def _progress_box_first(at):
+    """The top-bar progress box keeps the same place, first on the page, on every run.  Created only on runs
+    that read files, it took over the place of whatever sat there before (the unit card) and showed that
+    card's old contents, fixed over the top bar, while the item master was re-read."""
+    css, box = at.main.children[0], at.main.children[1]
+    assert "st-key-ing-progress" in css.value
+    assert str(box.proto.id).endswith("-ing-progress")
+
+
+def test_progress_box_has_a_fixed_place_on_every_step(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch)                          # step 1, nothing read
+    _progress_box_first(at)
+    at = _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))
+    _progress_box_first(at)                                   # step 2
+    at = _next(at, "ing::run")
+    _progress_box_first(at)                                   # step 3, files read on this run
+    at.run()
+    _progress_box_first(at)                                   # step 3 again, from the cache
 
 
 def test_accepting_a_block_rereads_nothing(tmp_path, monkeypatch, reads):
