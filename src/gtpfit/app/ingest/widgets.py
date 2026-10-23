@@ -39,15 +39,16 @@ def header(editable: bool) -> None:
     c1, c3 = st.columns([3, 1.2], vertical_alignment="bottom")
     with c1:
         recent = state.recent_clients()
-        options = recent + [state.NEW_CLIENT]
-        pick = st.selectbox("Client", options, key="ing::client_pick",
-                            help="Required. Outputs and the client's confirmed column mapping and units are kept "
-                                 "under data/workspace/<client>/ on this computer and reused next time.")
-        if pick == state.NEW_CLIENT:
-            name = st.text_input("New client name", key="ing::client_new", placeholder="e.g. Acme Retail")
-        else:
-            name = pick
-        st.session_state["ing::client"] = state.safe_name(name)
+        typed = st.session_state.get("ing::client_pick")
+        if typed and typed not in recent:  # a new name typed earlier stays a choice on every rerun
+            recent = [typed] + recent
+        # one box: pick a recent client, or type a new name and press Enter (accept_new_options)
+        pick = st.selectbox("Client", recent, index=0 if recent else None, key="ing::client_pick",
+                            accept_new_options=True, placeholder="Type a client name and press Enter",
+                            help="Pick a recent client, or type a new name and press Enter to add one. Outputs "
+                                 "and the client's confirmed column mapping and units are kept under "
+                                 "data/workspace/<client>/ on this computer and reused next time.")
+        st.session_state["ing::client"] = state.safe_name(pick or "")
     c3.markdown("🔒 **Data stays on this computer**")
 
 

@@ -36,7 +36,7 @@ def _folder_card(named: bool) -> None:
             else:
                 st.info("No folder chosen. You can also paste a path below.", icon="ℹ️")
         if not named:
-            st.caption("Name the client first.")
+            st.caption("Pick a client, or type a new name and press Enter, first.")
     c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
     paste = c1.text_input("Or paste a folder path", key="ing::folder_paste", disabled=not named,
                           placeholder=r"e.g. C:\Clients\Acme\2026-10 extract")

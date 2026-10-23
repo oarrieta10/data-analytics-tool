@@ -37,7 +37,6 @@ UNLOCKS = {"item_master": "container fit, cube and storage", "orders": "volumes,
 USE_AS = {"item_master": "Item master", "orders": "Orders", "receipts": "Receipts", "inventory": "Inventory",
           None: "Ignore"}
 LABEL_TO_TABLE = {v: k for k, v in USE_AS.items()}
-NEW_CLIENT = "New client…"
 
 
 def ss():

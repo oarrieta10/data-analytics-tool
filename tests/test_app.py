@@ -45,8 +45,7 @@ def _app(tmp_path, monkeypatch, folder=None, client="Acme", **state):
     monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
     at = AppTest.from_string(INGEST, default_timeout=300)
     if client:
-        at.session_state["ing::client_pick"] = "New client…"  # the list defaults to the most recent client
-        at.session_state["ing::client_new"] = client
+        at.session_state["ing::client_pick"] = client  # typed into the box (a new client) or picked
     for k, v in state.items():
         at.session_state[k] = v
     at.run()
@@ -559,3 +558,22 @@ def test_accepting_a_block_rereads_nothing(tmp_path, monkeypatch, reads):
     at = _next(at, f"accundo::{key}")
     assert any("BLOCKED" in e.value for e in at.error)
     assert reads == []
+
+
+def test_one_client_box_picks_or_adds(tmp_path, monkeypatch):
+    first = _app(tmp_path, monkeypatch, client=None)              # no clients yet: an empty box
+    box = first.selectbox(key="ing::client_pick")
+    assert box.value is None and box.options == [] and first.button(key="ing::choose").disabled
+    assert not [t for t in first.text_input if "client" in (t.key or "")]  # no second box for a new name
+    _app(tmp_path, monkeypatch, folder=_copy(tmp_path / "client"))      # Acme is now a recent client
+    at = _app(tmp_path, monkeypatch, client=None)
+    box = at.selectbox(key="ing::client_pick")
+    assert box.options == ["Acme"] and box.value == "Acme"             # the most recent, ready to use
+    # typed, no match, Enter: AppTest can only hand a typed name to a box before its first run (its set_value takes
+    # listed options only); the browser sends the typed text
+    at = _app(tmp_path, monkeypatch, client="Beta Foods")
+    assert at.session_state["ing::client"] == "Beta Foods"
+    assert not at.button(key="ing::choose").disabled
+    at.run()                                                           # another rerun: the new name stays
+    assert at.selectbox(key="ing::client_pick").value == "Beta Foods"
+    assert at.selectbox(key="ing::client_pick").options == ["Beta Foods", "Acme"]
