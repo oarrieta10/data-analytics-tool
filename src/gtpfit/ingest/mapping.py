@@ -77,6 +77,8 @@ def suggest_mapping(headers, table: str, params: IngestParams | None = None) -> 
     holder = {h: f for f, h in m.mapping.items()}
     for fname in [f.name for f in flds if f.required and f.name not in m.mapping and f.name not in m.ambiguous]:
         for score, _, h, how in sorted(by_field.get(fname, []), key=lambda c: -c[0]):
+            if how != "exact":  # only an exact name is worth taking from another field
+                continue
             other = holder.get(h)
             if other and other not in required:
                 del m.mapping[other], m.method[other]
@@ -146,7 +148,20 @@ def saved_mapping_for(profile: WmsProfile | None, table: str, headers, min_overl
     seen = set(profile.headers.get(table) or cols.values())
     if len(now & seen) / len(now | seen) < min_overlap:
         return None
-    return dict(cols)
+    return mapping_with_new_fields(cols, headers, table)
+
+
+def mapping_with_new_fields(columns: dict, headers, table: str) -> dict:
+    """A saved mapping plus fields it never mentions (added to the schema after it was saved, e.g. the package
+    level) where a header the mapping does not use matches them exactly.  A field the saved mapping maps is
+    never changed."""
+    out = dict(columns)
+    used = set(out.values())
+    auto = suggest_mapping([h for h in headers if h and h not in used], table)
+    for f, h in auto.mapping.items():
+        if f not in out and auto.method.get(f) == "exact":
+            out[f] = h
+    return out
 
 
 def load_wms_profile(path) -> WmsProfile:

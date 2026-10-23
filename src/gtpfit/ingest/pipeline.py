@@ -42,6 +42,7 @@ from .readers import Source, as_source, read as read_source
 from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES, normalise_header
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 from .units import expected_ranges as _expected
+from .packlevels import combine_pack_levels
 
 _DATE_FIELD = {"orders": "order_date", "receipts": "receipt_date", "inventory": "snapshot_date"}
 
@@ -67,6 +68,7 @@ class TableResult:
     unit_evidence: pd.DataFrame | None = None   # every unit pair tried, with implied medians
     mapping: Mapping | None = None
     date_format: str | None = None
+    levels: pd.DataFrame | None = None          # item master given per package level: every row, role, used
 
     @property
     def blocked(self) -> bool:
@@ -376,6 +378,11 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
         add("cases_need_item_master", "info", "Full-case lines found ('cases' column): qty here is loose units "
             "only until case packs from the item master are applied (ingest_folder does this).", fld="cases")
 
+    # -- package levels (item master given one row per package): one row per SKU, every row kept
+    if table == "item_master" and "pack_level" in out and out["pack_level"].notna().any():
+        out, res.levels, note = combine_pack_levels(out, params)
+        add("pack_levels_combined", "info", note, count=len(res.levels))
+
     # -- units (item master)
     if table == "item_master":
         out, res.units, res.unit_evidence = _units(out, m, profile, params, add)
@@ -409,6 +416,14 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     return res
 
 
+def _source_header(m, field: str) -> str:
+    """The client column a field came from; case / pallet sizes combined from package levels came from the
+    item-size columns, so their unit hints are read there."""
+    from .packlevels import CASE_FROM, PALLET_FROM
+    back = {derived: src for table in (CASE_FROM, PALLET_FROM) for src, derived in table.items()}
+    return m.mapping.get(field) or m.mapping.get(back.get(field, "")) or ""
+
+
 def _units(out, m, profile, params, add):
     rows, evidence = [], []
     for g in ("unit", "case"):
@@ -419,7 +434,7 @@ def _units(out, m, profile, params, add):
         wt = next((f.name for f in gf if f.kind == "weight"), None)
         decl = {}
         for kind in ("length", "weight"):
-            hints = {header_unit(m.mapping[f.name], kind) for f in gf if f.kind == kind} - {None}
+            hints = {header_unit(_source_header(m, f.name), kind) for f in gf if f.kind == kind} - {None} - {""}
             if len(hints) > 1:
                 add("unit_conflict", "block", f"{g} {kind} headers name different units {sorted(hints)}.")
                 return out, pd.DataFrame(rows), pd.DataFrame()
@@ -475,6 +490,13 @@ def _units(out, m, profile, params, add):
         rows.append(dict(group=g, length=lu, weight=wu, method="+".join(sorted(methods)),
                          plausible=bool(chosen.plausible), median_longest_in=chosen.median_longest_in,
                          median_density_lb_ft3=chosen.median_density_lb_ft3))
+    # pallet sizes (from package levels) are in the file's units: convert them as the case (else the unit) was
+    pal = [f for f in TABLES["item_master"] if f.group == "pallet" and f.name in out]
+    decided = {r["group"]: r for r in rows}
+    ref = decided.get("case") or decided.get("unit")
+    if pal and ref:
+        for f in pal:
+            out[f.name] = out[f.name] * (LENGTH_TO_IN[ref["length"]] if f.kind == "length" else WEIGHT_TO_LB[ref["weight"]])
     return out, pd.DataFrame(rows, columns=["group", "length", "weight", "method", "plausible",
                                             "median_longest_in", "median_density_lb_ft3"]), \
         (pd.concat(evidence, ignore_index=True) if evidence else pd.DataFrame())
@@ -572,6 +594,8 @@ def ingest_sources(assign: dict, profile: WmsProfile | None = None, params: Inge
             mappings[table] = r.mapping
         if r.table is not None:
             tables[table], rejects[table] = r.table, r.rejects
+            if r.levels is not None:
+                tables["item_master_levels"] = r.levels
             if r.date_format:
                 dfmt[table] = r.date_format
         if r.units is not None and len(r.units):

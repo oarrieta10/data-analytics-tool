@@ -112,6 +112,11 @@ ISSUE_TEXT: dict[str, IssueText] = {
                         "Order columns that match no field but hold only a few different values (e.g. a pick area "
                         "or carrier) were kept, named x_..., so the Scope step can filter on them.",
                         "None; they are only used if the scope filters on them."),
+    "pack_levels_combined": _T("Package levels combined per SKU",
+                               "The item master lists each SKU once per package (item, case, pallet). They were "
+                               "combined: item size from the item level, case pack from the smallest case, pallet "
+                               "quantity from the pallet. Every row is kept in item_master_levels.",
+                               "SKUs with no item-level row have no item size; quality and backfill flag them."),
     "auto_mapped": _T("Columns matched automatically",
                       "Columns were matched to fields by their names.",
                       "None once confirmed; the confirmed mapping is remembered for this client."),

@@ -23,9 +23,13 @@ def _prof():
 
 
 def test_saved_mapping_reloads_for_matching_headers():
-    assert saved_mapping_for(_prof(), "item_master", HDR) == COLS
+    got = saved_mapping_for(_prof(), "item_master", HDR)
+    assert {f: got[f] for f in COLS} == COLS  # every saved choice kept as it was
+    assert set(got) - set(COLS) <= {"description", "category", "subcategory", "case_l", "case_w", "case_h", "case_weight"}
+    assert all(h not in COLS.values() for f, h in got.items() if f not in COLS)  # extras: unused, exact headers only
     resent = HDR[:-1] + ["Brand"]  # a refreshed extract with one column swapped
-    assert saved_mapping_for(_prof(), "item_master", resent) == COLS
+    got = saved_mapping_for(_prof(), "item_master", resent)
+    assert {f: got[f] for f in COLS} == COLS
 
 
 def test_saved_mapping_not_used_for_a_different_file():

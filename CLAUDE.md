@@ -124,6 +124,12 @@ python -m pytest -q
   - **Related tables:** the site filter also applies to inventory and receipts when they have a site column,
     and warns when they don't. The waterfall's removed counts plus the in-scope rows always equal all rows,
     and saving writes `_scope/scope_summary.csv`.
+- **Package levels** (`ingest/packlevels.py`): an item master with one row per package (item / case / pallet,
+  mapped `pack_level`) becomes one row per SKU: item size from the unit-level row (`pack_unit_levels`, holding 1),
+  case pack and case size from the smallest case-level row, pallet quantity and size from the smallest pallet row.
+  Every input row is kept in `item_master_levels` with its role and whether it was used; SKUs with no unit-level row
+  keep a blank item size. A reused saved mapping also takes exact matches for fields it never mentioned
+  (`mapping_with_new_fields`); fields it maps are never changed.
 - **A required field wins a contested header** (`suggest_mapping`): a file whose only date is "Ship Date" uses it
   as the order date. Optional date fields (ship date) never block; bad values are left blank with a warning.
 - **Thresholds carry their own wording.** Each `IngestParams` field is declared with `params.setting()`:

@@ -149,6 +149,22 @@ class IngestParams:
         why="a peak worth designing for stands well clear of an ordinary month",
         effect="Raise it to name only the sharpest peaks; lower it to name more months.",
         source=_CONSULTANT, confidence="low")
+    pack_unit_levels: tuple = setting(
+        ("part", "each", "ea", "unit", "piece", "pc", "pcs", "item", "single", "sip"), block="detection",
+        unit="words", label="Package levels that are the item itself",
+        what="When the item master has one row per package level, a row whose level name contains one of these "
+             "words and holds one unit gives the item's own size; earlier words win when there are several.",
+        why="common names for the single item, the bare part first and its own shipping box last",
+        effect="Add the word a client's system uses for the single item; remove one to stop that level being "
+               "read as the item's size.",
+        source=_CONSULTANT, confidence="medium")
+    pack_pallet_levels: tuple = setting(
+        ("pallet", "plt", "skid"), block="detection", unit="words", label="Package levels that are pallets",
+        what="A package level whose name contains one of these words is a pallet: it gives the pallet quantity, "
+             "never the case pack.",
+        why="common names for a pallet load",
+        effect="Add a word to treat another level as a pallet; remove one to let that level count as a case.",
+        source=_CONSULTANT, confidence="medium")
     extra_max_distinct: int = setting(
         30, block="detection", unit="count", lo=0, hi=500, step=1, label="Extra order columns kept up to",
         what="Order columns that match no field are kept (named x_...) when they hold at most this many "
