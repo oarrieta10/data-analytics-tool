@@ -170,3 +170,14 @@ def test_skip_scope_saves_all_rows_on_purpose(tmp_path, monkeypatch, scope_resul
     spec = load_scope(client)
     assert spec.skipped and spec.include == {} and spec.note
     assert len(tables.load(client)["orders"]) == len(scope_result.tables["orders"])
+
+
+def test_use_suggested_note_after_editing(tmp_path, monkeypatch, scope_result):
+    client = _ingested(tmp_path, scope_result)
+    at = _page(tmp_path, monkeypatch, client)
+    suggestion = at.text_area(key="scp::note").value
+    at.text_area(key="scp::note").input("my own words").run()
+    assert not at.exception, at.exception
+    at.button(key="scp::suggest").click().run()          # used to fail: the box was already drawn
+    assert not at.exception, at.exception
+    assert at.text_area(key="scp::note").value == suggestion

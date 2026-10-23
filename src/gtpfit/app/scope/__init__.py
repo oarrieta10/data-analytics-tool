@@ -212,10 +212,9 @@ def page() -> None:
         if "scp::note" not in st.session_state:
             st.session_state["scp::note"] = start.note or suggestion
         note = st.text_area("Scope note", key="scp::note", label_visibility="collapsed", height=70)
-        if note.strip() != suggestion and st.button("Use suggested note", key="scp::suggest",
-                                                    help=suggestion):
-            st.session_state["scp::note"] = suggestion
-            st.rerun()
+        if note.strip() != suggestion:  # the callback runs before the next run draws the note box
+            st.button("Use suggested note", key="scp::suggest", help=suggestion,
+                      on_click=lambda: st.session_state.update({"scp::note": suggestion}))
     c1, c2, c3, _ = st.columns([1, 1.6, 2.2, 1.5])
     if c1.button("Reset", key="scp::reset", help="Back to every value in, except the auto-excluded ones."):
         state.forget_widgets()
