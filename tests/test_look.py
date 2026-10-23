@@ -95,3 +95,45 @@ def test_workbench_shows_the_logo(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, at.exception
     assert "theme.logo()" in (APP / "workbench.py").read_text(encoding="utf-8")
+
+
+# ---- the Ingest stepper: design-system icons ---------------------------------------------------------------
+
+def test_step_icons_are_the_design_system_artwork():
+    import hashlib
+    icons = STATIC / "icons"
+    sha = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in icons.glob("*.svg")}
+    assert sha == {  # the Hai Robotics design system's Icons group, unchanged
+        "inbound.svg": "b7d7c27e567c93ebe888a8beb5c9232d704f0c5f10c2649e93e10594151a04d1",
+        "search.svg": "12a5ffcb0e57ffef6c634acc4fe32d42314ff2e77d162c4543e147bd24050c16",
+        "safety.svg": "dc3d21dce5c11109437488edb00fe91ff1393a0e239db83a569e1f4ff5c418dd",
+        "package.svg": "d2645a4bc7ecc3dd14d75021aaf60e0d507c4bb3ebb6a6057103de5dd09aeb9c"}
+    for p in icons.glob("*.svg"):
+        svg = p.read_text(encoding="utf-8").lower()
+        assert "<script" not in svg and "href" not in svg and "url(" not in svg
+
+
+def test_stepper_html_marks_done_current_and_next():
+    from gtpfit.app.ingest.widgets import stepper_html
+    import base64
+    import re
+    h = stepper_html(3, ["Choose folder", "Confirm files", "Review", "Done"], dark=False)
+    icons = [base64.b64decode(b).decode("utf-8") for b in re.findall(r"data:image/svg\+xml;base64,([^\"]+)", h)]
+    assert len(icons) == 4 and "<svg" not in h                    # images: st.html drops inline <svg>
+    assert ['stroke="#373737"' in s for s in icons] == [True, True, False, False]   # done: steel grey
+    assert 'stroke="#2E31FA"' in icons[2] and 'stroke="#AAAAAA"' in icons[3]       # now: Hai Blue; next: grey
+    assert not any("#231815" in s for s in icons)
+    assert h.count('class="step done"') == 2 and h.count('class="step now"') == 1 and h.count('class="step next"') == 1
+    assert 'aria-current="step"' in h and "Review" in h
+    assert "#2E31FA" in h                                          # Hai Blue for the current step and track
+    assert "#808AFF" in stepper_html(1, ["A", "B"], dark=True)     # the dark-mode accent
+
+
+def test_ingest_page_draws_the_stepper(tmp_path, monkeypatch):
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("GTPFIT_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_string("from gtpfit.app.ingest import page\npage()\n")
+    at.run()
+    assert not at.exception, at.exception
+    assert not [m for m in at.markdown if "(1) Choose folder" in m.value or "(✓)" in m.value]  # the old text row

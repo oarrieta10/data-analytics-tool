@@ -7,6 +7,7 @@ everything here works offline.
 |---|---|---|
 | `hai-loader/hai-loader.js` | HAI Robotics 3D loading animation (`<hai-loader>`), shown in the middle of the screen while a page is working (`app/loader.py`). | `vendor/hai-loader/HAI Robot Loading Animation.zip`, converted from Windows-1252 to UTF-8. One change: `import * as THREE from 'three'` became `from '../three/three.module.min.js'`. |
 | `brand/hai-robotics-primary.svg`, `brand/hai-robotics-primary-reverse.svg` | The Hai Robotics primary logo (full colour, and white for dark mode), top left of every page (`app/theme.py`). | The Hai Robotics design system's Logos group (https://claude.ai/artifact/KBgzRxGv1ydpfyh9YGQevd), unchanged; a test pins their checksums. Never redraw or recolour them. |
+| `icons/inbound.svg`, `search.svg`, `safety.svg`, `package.svg` | The Ingest step icons (Choose folder, Confirm files, Review, Done), drawn by `app/ingest/widgets.py` with the stroke set to the step's colour. | The Hai Robotics design system's Icons group, unchanged; a test pins their checksums. The set has no check mark and the brand book forbids other icon libraries, so state shows by colour and the track. |
 | `three/three.module.min.js`, `three/three.core.min.js` | three.js r184, the loader's only dependency. | `https://unpkg.com/three@0.184.0/build/`, the version the loader was tested with. MIT licence in `three/LICENSE`. |
 
 Check by hand after changing any of these: run a page for a few seconds; the robot should appear after

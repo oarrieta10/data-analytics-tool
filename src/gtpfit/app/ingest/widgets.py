@@ -2,12 +2,16 @@
 coverage strip and the detail tabs.  Issue wording comes from gtpfit.ingest.checks.ISSUE_TEXT."""
 from __future__ import annotations
 
+import base64
 import calendar
 import datetime as dt
+from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from gtpfit.app.theme import HAI_BLUE, HAI_BLUE_4
 from gtpfit.ingest.checks import NOT_ACCEPTABLE, explain
 from gtpfit.ingest.coverage import sparkline_svg
 from gtpfit.ingest.coverage import OUTSIDE_NOTE
@@ -20,12 +24,47 @@ from . import state
 SEV_LABEL = {"block": "⛔ block", "accepted": "✅ accepted", "warn": "⚠️ warn", "info": "ℹ️ info"}
 
 
-def stepper(current: int) -> None:
+# Step icons from the Hai Robotics design system's Icons group (app/static/icons/, unchanged files): what comes
+# in, is it what we think, can we trust it, packaged outputs.  The set has no check mark, and the brand book
+# forbids mixing in other icon libraries, so a step's state shows by colour and the track between steps.
+STEP_ICONS = ("inbound", "search", "safety", "package")
+_ICONS = Path(__file__).resolve().parents[1] / "static" / "icons"
+# Design-system colours per theme: accent (`hai-blue` / `hai-blue-4`), done ink (`black-3c` / `cool-grey-4`),
+# upcoming icon and label (`cool-grey-8` / `cool-grey-11` and the reverse in dark), track (`cool-grey-4` / `black-3c`).
+_STEP_COLOURS = {False: dict(now=HAI_BLUE, done="#373737", next_icon="#AAAAAA", next_text="#5A5A5A", track="#E6E6E6"),
+                 True: dict(now=HAI_BLUE_4, done="#E6E6E6", next_icon="#5A5A5A", next_text="#AAAAAA", track="#373737")}
+
+
+def _icon(name: str, colour: str) -> str:
+    """The design-system icon in one of its allowed colours, as an <img> data URI (st.html drops inline <svg>)."""
+    svg = (_ICONS / f"{name}.svg").read_text(encoding="utf-8").replace('stroke="#231815"', f'stroke="{colour}"')
+    data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f'<img src="data:image/svg+xml;base64,{data}" width="26" height="26" alt="">'
+
+
+def stepper_html(current: int, steps, dark: bool) -> str:
+    """The step row: icon and name per step, joined by a track that is accent-coloured up to the current step."""
+    c = _STEP_COLOURS[dark]
     parts = []
-    for i, name in enumerate(state.STEPS, start=1):
-        mark = "✓" if i < current else str(i)
-        parts.append(f"**({mark}) {name}**" if i == current else f"({mark}) {name}")
-    st.markdown(" — ".join(parts))
+    for i, name in enumerate(steps, start=1):
+        cls = "done" if i < current else "now" if i == current else "next"
+        cur = ' aria-current="step"' if cls == "now" else ""
+        icon = _icon(STEP_ICONS[(i - 1) % len(STEP_ICONS)], c["now"] if cls == "now" else c["done"] if cls == "done"
+                     else c["next_icon"])
+        if i > 1:
+            parts.append(f'<span class="track{" on" if i <= current else ""}"></span>')
+        parts.append(f'<span class="step {cls}"{cur}>{icon}<span class="name">{i} · {escape(name)}</span></span>')
+    css = (f".hai-steps{{display:flex;align-items:center;gap:10px;margin:2px 0 10px;flex-wrap:wrap}}"
+           f".hai-steps .step{{display:inline-flex;align-items:center;gap:8px;font-size:15px;white-space:nowrap}}"
+           f".hai-steps .done{{color:{c['done']}}}.hai-steps .now{{color:{c['now']};font-weight:600}}"
+           f".hai-steps .next{{color:{c['next_icon']}}}.hai-steps .next .name{{color:{c['next_text']}}}"
+           f".hai-steps .track{{flex:1;min-width:24px;height:2px;background:{c['track']}}}"
+           f".hai-steps .track.on{{background:{c['now']}}}")
+    return f'<style>{css}</style><nav class="hai-steps" aria-label="Ingest steps">{"".join(parts)}</nav>'
+
+
+def stepper(current: int) -> None:
+    st.html(stepper_html(current, state.STEPS, getattr(st.context.theme, "type", None) == "dark"))
 
 
 def header(editable: bool) -> None:
