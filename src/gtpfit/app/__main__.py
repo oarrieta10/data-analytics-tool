@@ -5,13 +5,15 @@ from pathlib import Path
 
 def main():
     from streamlit.web import cli
+
+    from gtpfit.app import theme
     port = "8501"
     if "--port" in sys.argv:
         port = sys.argv[sys.argv.index("--port") + 1]
     app = Path(__file__).with_name("workbench.py")
     sys.argv = ["streamlit", "run", str(app), "--server.port", port, "--server.headless", "true",
                 "--server.enableStaticServing", "true",  # app/static/: the HAI loader and three.js
-                "--browser.gatherUsageStats", "false"]
+                "--browser.gatherUsageStats", "false", *theme.streamlit_flags()]  # Hai Blue accent
     sys.exit(cli.main())
 
 

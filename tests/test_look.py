@@ -1,6 +1,6 @@
-"""The HAI robot loading animation: served locally (offline), installed once per page, shown in the middle of
-the screen only for runs longer than a moment.  JavaScript does not run under AppTest; the browser check is
-done by hand (see app/static/README.md)."""
+"""The look of the workbench: the HAI robot loading animation (served locally, installed once per page, shown in
+the middle of the screen only for runs longer than a moment) and the Hai Blue accent colour.  JavaScript and
+theming do not run under AppTest; the browser check is done by hand (see app/static/README.md)."""
 import re
 from pathlib import Path
 
@@ -43,3 +43,24 @@ def test_workbench_installs_it(tmp_path, monkeypatch):
     at = AppTest.from_string("from gtpfit.app import loader\nloader.install()\n")
     at.run()
     assert not at.exception, at.exception
+
+
+# ---- accent colour: Hai Blue (Hai Robotics design system) ------------------------------------------------
+
+def test_accent_is_hai_blue():
+    from gtpfit.app import theme
+    assert theme.HAI_BLUE == "#2E31FA" and theme.HAI_BLUE_4 == "#808AFF"
+    flags = theme.streamlit_flags()
+    pairs = dict(zip(flags[::2], flags[1::2]))
+    assert pairs["--theme.light.primaryColor"] == pairs["--theme.light.linkColor"] == "#2E31FA"
+    assert pairs["--theme.dark.primaryColor"] == pairs["--theme.dark.linkColor"] == "#808AFF"
+    assert "theme.streamlit_flags()" in (APP / "__main__.py").read_text(encoding="utf-8")
+
+
+def test_theme_flags_are_known_to_streamlit():
+    pytest.importorskip("streamlit")
+    from streamlit import config
+    from gtpfit.app import theme
+    config.get_config_options()
+    for flag in theme.streamlit_flags()[::2]:
+        assert flag[2:] in config._config_options, flag
