@@ -232,3 +232,13 @@ def test_impact_of_an_empty_scope():
     o = pd.DataFrame({"order_id": ["A"], "order_date": [pd.Timestamp("2025-01-01")], "sku": ["x"], "qty": [1]})
     r = impact(o, o.iloc[0:0], "row")
     assert list(r["in_scope"][:3]) == [0, 0.0, 0]
+
+
+def test_same_scope():
+    from gtpfit.scope import ScopeSpec, same_scope
+    a = ScopeSpec(include={"site": ["B", "A"]}, note="East ", date_basis="ship_date")
+    assert same_scope(a, ScopeSpec(include={"site": ["A", "B"]}, note="East"))   # order, spaces, unused basis
+    assert not same_scope(a, ScopeSpec(include={"site": ["A"]}, note="East"))
+    assert not same_scope(a, ScopeSpec(include={"site": ["A", "B"]}, note="West"))
+    assert not same_scope(a, ScopeSpec(include={"site": ["A", "B"]}, note="East", date_from="2025-02-01"))
+    assert not same_scope(None, a)

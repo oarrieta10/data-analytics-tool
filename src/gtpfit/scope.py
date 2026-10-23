@@ -153,6 +153,15 @@ class ScopeSpec:
         return cls(**d)
 
 
+def same_scope(a: ScopeSpec | None, b: ScopeSpec | None) -> bool:
+    """Whether two specs keep the same rows and say the same thing (filters, date window, basis, note)."""
+    if a is None or b is None:
+        return False
+    inc = lambda s: {c: sorted(map(str, v)) for c, v in s.include.items()}
+    dates = lambda s: (s.date_from, s.date_to, s.date_basis if (s.date_from or s.date_to) else None)
+    return inc(a) == inc(b) and dates(a) == dates(b) and (a.note or "").strip() == (b.note or "").strip()
+
+
 def default_spec(columns: list, params: ScopeParams | None = None) -> ScopeSpec:
     """Every value in, except those matching an exclusion keyword."""
     params = params or ScopeParams()

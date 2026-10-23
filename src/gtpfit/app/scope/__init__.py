@@ -17,7 +17,7 @@ import streamlit as st
 from gtpfit import workspace
 from gtpfit.ingest.coverage import OUTSIDE_NOTE, busiest_months, coverage
 from gtpfit.scope import (ScopeParams, ScopeSpec, apply_scope, default_spec, detect_scope_columns, impact,
-                          load_scope, params_diff, save_scope)
+                          load_scope, params_diff, same_scope, save_scope)
 
 from . import state
 
@@ -63,7 +63,9 @@ def _filters(cols, start: ScopeSpec, n_lines: int) -> dict:
             st.markdown(f"**{c.label}**")
             kept = []
             for v in c.values:
-                default = v.value in start.include[c.name] if c.name in start.include else not v.auto_excluded
+                # a column the spec does not filter keeps every value (a fresh default spec already lists the
+                # auto-excluded values; a saved or skipped one means what it says)
+                default = v.value in start.include[c.name] if c.name in start.include else True
                 a, b, d, e = st.columns([3, 1.2, 0.8, 1.6], vertical_alignment="center")
                 on = a.checkbox(v.value, value=default, key=f"scp::v::{c.name}::{v.value}")
                 b.markdown(f"{v.lines:,} lines")
@@ -215,28 +217,52 @@ def page() -> None:
         if note.strip() != suggestion:  # the callback runs before the next run draws the note box
             st.button("Use suggested note", key="scp::suggest", help=suggestion,
                       on_click=lambda: st.session_state.update({"scp::note": suggestion}))
-    c1, c2, c3, _ = st.columns([1, 1.6, 2.2, 1.5])
+    _actions(name, cols, params, dataclasses.replace(spec, note=note.strip()), res, removed)
+    _detection_settings()
+
+
+def _actions(name: str, cols, params, current: ScopeSpec, res, removed: bool) -> None:
+    """Save / skip while the scope on screen differs from the saved one; once they match, go on to Quality."""
+    saved = load_scope(name)
+    done = st.session_state.pop("scp::just_saved", None)
+    if done:
+        st.success(done, icon="✅")
+    c1, c2, c3, _ = st.columns([1, 1.8, 2.2, 1.3])
     if c1.button("Reset", key="scp::reset", help="Back to every value in, except the auto-excluded ones."):
         state.forget_widgets()
         st.session_state[f"scp::start::{name}"] = default_spec(cols, params)
         st.rerun()
-    blocked = removed and not note.strip()
+    if same_scope(saved, current):
+        if c2.button("Continue to Quality →", type="primary", key="scp::to_quality"):
+            st.session_state["qly::client"] = name
+            from gtpfit.app import pages
+            st.switch_page(pages.QUALITY)
+        what = "skipped: every row is used" if saved.skipped else \
+            f"saved: {res.lines_in:,} of {res.lines_all:,} order lines in scope"
+        c3.caption(f"Scope {what} ({saved.saved_at[:10]}). Change a filter to edit it.")
+        return
+    blocked = removed and not current.note
     if c2.button("Save scope", type="primary", key="scp::save", disabled=blocked):
-        saved = save_scope(name, dataclasses.replace(spec, note=note.strip()), res.summary)
+        saved = save_scope(name, current, res.summary)
         st.session_state[f"scp::start::{name}"] = saved
-        st.success(f"Scope saved for **{name}** ({res.lines_in:,} of {res.lines_all:,} order lines in scope). "
-                   f"Every module from Quality on reads only these rows. What was left out is listed in "
-                   f"`{workspace.client_dir(name) / '_scope' / 'scope_summary.csv'}`.", icon="✅")
+        st.session_state["scp::just_saved"] = (
+            f"Scope saved for **{name}** ({res.lines_in:,} of {res.lines_all:,} order lines in scope). Every module "
+            f"from Quality on reads only these rows. What was left out is listed in "
+            f"`{workspace.client_dir(name) / '_scope' / 'scope_summary.csv'}`.")
+        st.rerun()
     if c3.button("Skip scope (use all rows)", key="scp::skip",
                  help="Design for every row ingest kept, on purpose. Quality opens either way."):
         save_scope(name, ScopeSpec(skipped=True, note="All rows: no scope set.",
                                    seen={c.name: [v.value for v in c.values] for c in cols}))
+        state.forget_widgets()  # every box ticked, no date window, the skip note
         st.session_state[f"scp::start::{name}"] = load_scope(name)
-        st.success(f"No scope for **{name}**: every module from Quality on uses all {res.lines_all:,} order "
-                   "lines.", icon="✅")
+        st.session_state["scp::just_saved"] = (f"No scope for **{name}**: every module from Quality on uses all "
+                                               f"{res.lines_all:,} order lines.")
+        st.rerun()
+    if saved is not None:
+        st.caption("Unsaved changes: the saved scope is still the one in use until you save.")
     if blocked:
         st.caption("Write a scope note to save: it explains to the report's readers what was left out.")
-    _detection_settings()
 
 
 _IMPACT_FMT = {"Orders": "{:,.0f}", "Lines per day (average)": "{:,.0f}", "Peak day (lines)": "{:,.0f}",

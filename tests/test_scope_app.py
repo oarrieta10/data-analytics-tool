@@ -181,3 +181,33 @@ def test_use_suggested_note_after_editing(tmp_path, monkeypatch, scope_result):
     at.button(key="scp::suggest").click().run()          # used to fail: the box was already drawn
     assert not at.exception, at.exception
     assert at.text_area(key="scp::note").value == suggestion
+
+
+def _keys(at):
+    return {b.key for b in at.button}
+
+
+def test_saved_scope_offers_quality_until_changed(tmp_path, monkeypatch, scope_result):
+    client = _ingested(tmp_path, scope_result)
+    at = _page(tmp_path, monkeypatch, client)
+    assert {"scp::save", "scp::skip"} <= _keys(at) and "scp::to_quality" not in _keys(at)
+    at.button(key="scp::save").click().run()
+    assert not at.exception, at.exception
+    assert any("Scope saved" in s.value for s in at.success)
+    assert "scp::to_quality" in _keys(at) and not {"scp::save", "scp::skip"} & _keys(at)
+    at.checkbox(key="scp::v::site::DC-West").uncheck().run()      # a change: save again
+    assert "scp::save" in _keys(at) and "scp::to_quality" not in _keys(at)
+    assert any("Unsaved changes" in c.value for c in at.caption)
+    again = _page(tmp_path, monkeypatch, client)                   # a new session opens on the saved scope
+    assert "scp::to_quality" in _keys(again)
+
+
+def test_skip_ticks_every_value_and_offers_quality(tmp_path, monkeypatch, scope_result):
+    client = _ingested(tmp_path, scope_result)
+    at = _page(tmp_path, monkeypatch, client)
+    assert not at.checkbox(key="scp::v::order_status::CANCELLED").value   # auto-excluded before the skip
+    at.button(key="scp::skip").click().run()
+    assert not at.exception, at.exception
+    assert at.checkbox(key="scp::v::order_status::CANCELLED").value       # every row, as saved
+    assert "scp::to_quality" in _keys(at) and "scp::save" not in _keys(at)
+    assert _waterfall(at)["Lines left"].iat[-1] == _waterfall(at)["Lines left"].iat[0]
