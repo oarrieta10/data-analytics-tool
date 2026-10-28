@@ -169,7 +169,8 @@ def estimate(query: pd.DataFrame, donors: pd.DataFrame, peers: pd.Series, bp: Ba
             wt = float(np.exp(_weighted_median(d_w[nb], w)))
             lv = d_logvol[nb]
             spread = float(np.exp(_weighted_median(np.abs(lv - _weighted_median(lv, w)), w)))
-            conf = "high" if (w.max() >= bp.high_similarity and spread <= bp.high_max_spread) else "medium"
+            conf = "high" if (w.max() >= bp.high_similarity and spread <= bp.high_max_spread) else \
+                "medium" if w.max() >= bp.medium_similarity else "low"
             rows.append((dims, wt, "neighbours", conf, float(w.max()), ", ".join(d_sku[nb])))
             continue
         peer = peers.get(q.at[i, "sku"]) if isinstance(peers, pd.Series) else None

@@ -75,6 +75,16 @@ def test_missing_item_takes_its_familys_size():
     assert all(n.startswith("F1-") for n in _v(res, "F1-3", "unit_l").neighbours.split(", "))
 
 
+def test_confidence_bands_follow_similarity():
+    im = _im()
+    im.loc[im.sku == "F1-3", ["unit_l", "unit_w", "unit_h", "unit_weight"]] = np.nan
+    strict = dataclasses.replace(BP, high_similarity=0.999, medium_similarity=0.998)
+    r = _v(_run(im, strict)[0], "F1-3", "unit_l")
+    assert r.method == "neighbours" and r.confidence == "low"
+    mid = dataclasses.replace(BP, high_similarity=0.999, medium_similarity=0.3)
+    assert _v(_run(im, mid)[0], "F1-3", "unit_l").confidence == "medium"
+
+
 def test_glued_description_still_matches():
     im = _im()
     im.loc[im.sku == "F0-2", "description"] = "HEXBOLTM8X20ZINCUPPER"

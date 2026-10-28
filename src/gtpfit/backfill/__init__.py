@@ -79,7 +79,8 @@ def _shares(status: pd.DataFrame, ready: set, has_inventory: bool) -> dict:
 
 
 def assess(tbls: dict, quality: QualityResult, bp: BackfillParams | None = None,
-           ip: IngestParams | None = None) -> BackfillResult:
+           ip: IngestParams | None = None, validate: bool = False) -> BackfillResult:
+    """validate: also run the holdout accuracy test (validate.holdout) and put it in the summary."""
     bp, ip = bp or BackfillParams(), ip or IngestParams()
     first = tbls["item_master"].drop_duplicates("sku").reset_index(drop=True)
     flags, status = quality.flags, quality.status
@@ -169,6 +170,9 @@ def assess(tbls: dict, quality: QualityResult, bp: BackfillParams | None = None,
             "not_estimated": _shares(status, unfilled - before, False)["lines"]["share"]},
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in dataclasses.asdict(bp).items()},
     }
+    if validate:
+        from .validate import holdout
+        summary["holdout"] = holdout(tbls, quality, bp, ip).summary
     return BackfillResult(values, items, summary, donors, bp)
 
 
@@ -179,12 +183,13 @@ def saved_params(client: str) -> BackfillParams:
     return BackfillParams(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in saved.items() if k in names})
 
 
-def run_backfill(client: str, params: BackfillParams | None = None) -> BackfillResult:
-    """Backfill for a client's in-scope data, after quality/ with the client's saved quality settings."""
+def run_backfill(client: str, params: BackfillParams | None = None, validate: bool = True) -> BackfillResult:
+    """Backfill for a client's in-scope data, after quality/ with the client's saved quality settings; with the
+    holdout accuracy test unless validate=False."""
     tbls = tables.load(client)
     ip = workspace.client_params(client)
     q = quality_assess(tbls, quality_saved_params(client), ip, workspace.line_definition(client))
-    return assess(tbls, q, params or saved_params(client), ip)
+    return assess(tbls, q, params or saved_params(client), ip, validate)
 
 
 def write_outputs(result: BackfillResult, client: str):

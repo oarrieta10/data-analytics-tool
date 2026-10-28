@@ -42,12 +42,21 @@ class BackfillParams:
                "ones.",
         source=_CONSULTANT, confidence="low")
     high_similarity: float = setting(
-        0.6, block="detection", unit="share", lo=0.1, hi=1.0, step=0.05, label="High confidence from",
+        0.85, block="detection", unit="share", lo=0.1, hi=1.0, step=0.05, label="High confidence from",
         what="An estimate is high confidence when its closest item is at least this similar and the items it "
-             "borrows from agree (see the spread below); otherwise medium.",
-        why="at this similarity the descriptions name the same kind of part",
+             "borrows from agree (see the spread below).",
+        why="in a hold-out test on a parts catalogue, estimates this similar were typically 12% off in volume "
+            "and 6% in weight",
         effect="Raise it to call fewer estimates high confidence; lower it to call more.",
-        source=_CONSULTANT, confidence="low")
+        source="Hold-out test on one parts catalogue (2,226 hidden items)", confidence="medium")
+    medium_similarity: float = setting(
+        0.5, block="detection", unit="share", lo=0.05, hi=1.0, step=0.05, label="Medium confidence from",
+        what="Below high confidence, an estimate is medium when its closest item is at least this similar; "
+             "below it, low.",
+        why="in the same hold-out test, estimates from 0.5 to 0.85 were typically 1.9x off in volume, and "
+            "below 0.5 3.3x off",
+        effect="Raise it to call fewer estimates medium; lower it to call more.",
+        source="Hold-out test on one parts catalogue (567 and 87 hidden items)", confidence="medium")
     high_max_spread: float = setting(
         1.5, block="detection", unit="x", lo=1.05, hi=5.0, step=0.05, label="High confidence: spread at most",
         what="For high confidence, the volumes of the items borrowed from must agree within this factor (a "

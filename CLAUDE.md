@@ -52,7 +52,9 @@ interactive HTML report.
   placeholder / copied values; keep every other doubt, unit slips included, with the estimate beside it and a review
   flag beyond `review_factor`; donors = trusted SKUs), `estimate.py` (case of one → nearest trusted neighbours by
   char n-gram TF-IDF of the description + case / known sizes + category → peer median; scaled to a given unit
-  volume), `params.py` (`BackfillParams`), `text.py` (`BACKFILL_TEXT`). Runs quality first; estimates active SKUs
+  volume), `validate.py` (holdout: hide a seeded share of trusted active items, estimate them from the rest; error
+  factor, ±25 / ±50% shares, by method and confidence, against a median-item baseline; confidence bands were set
+  from it), `params.py` (`BackfillParams`), `text.py` (`BACKFILL_TEXT`). Runs quality first; estimates active SKUs
   only; writes `data/workspace/<client>/_backfill/` (values, item_master_backfilled, summary with the gap left:
   orphans / kept doubts / not estimated)
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
