@@ -191,8 +191,11 @@ def page() -> None:
     settings_box = st.container()
     with settings_box:
         p = _settings(name)
-        st.button("Continue to Backfill →", key="qly::to_backfill", disabled=True,
-                  help="Backfill (filling and correcting values) is the next module; not built yet.")
+        if st.button("Continue to Backfill →", key="qly::to_backfill", type="primary",
+                     help="Estimate the sizes quality cannot trust, and see how good the estimates are."):
+            st.session_state["bf::client"] = name
+            from gtpfit.app import pages
+            st.switch_page(pages.BACKFILL)
     with body:
         with st.spinner("Checking the item data…"):
             r = state.result(name, p)

@@ -40,7 +40,7 @@ __all__ = ["BackfillParams", "BackfillResult", "assess", "run_backfill", "write_
 CASE_FIELDS = {"case", "case_l", "case_w", "case_h", "case_weight", "case_qty"}
 _ESTIMATED = ("neighbours", "neighbours_volume", "case_of_one")  # methods specific enough to send a value to review
 VALUE_COLUMNS = ["sku", "field", "original", "estimate", "value", "action", "method", "confidence", "similarity",
-                 "neighbours", "codes"]
+                 "neighbours", "codes", "lines"]
 
 
 @dataclass
@@ -131,6 +131,7 @@ def assess(tbls: dict, quality: QualityResult, bp: BackfillParams | None = None,
                 rows.append(base | dict(value=orig_of[f], action="kept_review" if review else "kept",
                                         method="client", confidence=""))
     values = pd.DataFrame(rows, columns=VALUE_COLUMNS)
+    values["lines"] = values["sku"].map(status.drop_duplicates("sku").set_index("sku")["lines"]).fillna(0.0)
 
     items = first.drop(columns="_case_doubt").copy()
     for f in UNIT_FIELDS:

@@ -65,7 +65,7 @@ def test_tiles_match_the_summary_file(tmp_path, monkeypatch, scope_result):
         assert tiles[label] == f"{s['score']['unit_fit'][basis]['share']:.0%}"
     text = " ".join(m.value for m in at.markdown)
     assert "of the picking work is described by usable dimensions and weight" in text
-    assert at.button(key="qly::to_backfill").disabled
+    assert not at.button(key="qly::to_backfill").disabled
     assert (tmp_path / "ws" / client / "_quality" / "items_to_measure.csv").exists()
 
 

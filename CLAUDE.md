@@ -64,6 +64,10 @@ interactive HTML report.
   - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files (+ client settings) → 3 Review → 4 Done (`state.py` session,
     folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
     a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
+  - `app/quality/`, `app/backfill/` one page each (settings drawn from the module's params with
+    `widgets.control`, saved under `quality:` / `backfill:` in client.yaml; a cached run that also writes the
+    module's outputs). Backfill shows readiness before → after, the gap left, the holdout table, filled and
+    to-review lists, a SKU look-up
   - `app/loader.py` the HAI robot loading animation in the middle of the screen while a page works (replaces
     Streamlit's running icon); `app/theme.py` Hai Blue accent and the Hai Robotics logo (top left), from the
     Hai Robotics design system; `app/static/` serves the loader, three.js and the logo files locally (see its README)
