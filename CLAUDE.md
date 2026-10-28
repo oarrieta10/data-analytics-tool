@@ -9,6 +9,10 @@ interactive HTML report.
 ## Ground rules
 - **Clean-room build.** Do not copy code, DAX, M, reference tables or data from any previous
   employer's tools. Methods are general industry practice; implementations are written fresh here.
+  **Exception:** the consultant's own Power BI tool in `pbi/` (General Data Analysis, built at a previous
+  employer, who gave permission) may be read in full and its rules and values reused as a starting point
+  (slotting, storage sizing, tessellation); gtp-fit's code is still written fresh in Python, each reused value
+  recorded as a parameter with its source. `pbi/` is git-ignored and never committed.
 - **Develop and validate on real client data, locally.** From quality/ on, modules are built, tuned and checked on
   the real clients in `data/real/` (git-ignored; ingested and scoped into `data/workspace/`). Committed tests use
   small hand-built frames and the synthetic fixtures; real-data tests skip when `data/real/` is absent.
@@ -113,14 +117,37 @@ the user inspect and play with it before starting the next module.
    description, case dims/weight; log space) → category median. Every value tagged with method and
    confidence. Validation **to be agreed**; masked holdout on real item masters (hide known values,
    predict, measure error) works without an answer key.
-4. `profile/` — volumes, design day at a percentile, peak ratios, order profile, ABC velocity,
-   days on hand, turns, inbound.
-5. `fit/` — per-SKU container fit (6-orientation tessellation + weight cap) for every container
-   in the catalogue.
-6. `catalog/` + `sizing/` — technology catalogue (YAML, each parameter with source + confidence);
-   system sizing: containers, footprint at clear height, workstations at design-day peak, rough cost.
-7. `report/` — comparison scorecard and story; one self-contained HTML file (inline SVG charts,
-   light/dark, hover tooltips, "how it's calculated" per chart).
+4. ~~`profile/`~~ (done) — volumes, design day from SLAs (percentile fallback), peak ratios, order profile, ABC
+   velocity, days on hand, turns, inbound. Still to add: growth factors (volume, SKU; shared by every scenario),
+   pick frequency (days picked, days between picks), size / weight histograms per SKU and cube / weight per
+   order, working hours per day.
+The design stage (5–7) is built as **two layers**, so design parameters can be explored live:
+   - **computed once per data change, cached:** a per-SKU table (velocity class, units per day, pick frequency,
+     sizes and their provenance) and the fit table (units per container and per divider cell, for every
+     catalogue container), plus daily demand per channel and the lines of each order;
+   - **recomputed on every parameter change (target under 1 s):** slotting, storage, replenishment and
+     workstation sizing, as vectorised arithmetic over those tables.
+   **Scenarios** are named, saved parameter sets per client (typically 3–5), compared side by side on a page and
+   in the report. Shared by every scenario (they describe the client): data, scope, backfilled sizes, service
+   targets (SLAs) and growth. Per scenario: system / container, storage rules, slotting rules, operations.
+   The goal is to **recommend the best HAI system** for the client (today HaiPick System 2, HaiPick System 3 and
+   HaiPick Climb, some of which take larger products), set against competing technologies, and to say plainly
+   when HAI is not the best fit.
+5. `fit/` — per SKU × container: units that fit by tessellation (6 orientations, then the leftover space along
+   each side), by liquid cube at a cell utilisation, and by weight cap; for the whole container and for divider
+   cells (1/2, 1/4, 1/8). Starting point: the `pbi/` tool's tessellation.
+5b. `slotting/` — which SKUs go where: per system, eligibility rules (fits a cell, weight cap, minimum units per
+   bin, suspicious sizes, daily cube against the container), and where the rest go (another HAI system, carton
+   flow, pallet flow, bulk / out of scope). Rules first, set per scenario; the order-level split (lines per order
+   in each zone, orders completed in one zone) feeds workstation load. Starting point: the `pbi/` tool's slotting.
+6. `catalog/` + `sizing/` — technology catalogue (YAML, each parameter with source + confidence: containers with
+   inside sizes, weight cap and divider options, storage density, rates, cost); storage per SKU (days of stock by
+   velocity class at the design year, totes and partial cells, max totes per SKU), replenishment (units and totes
+   per day into the system, replenish point), containers, footprint at clear height, workstations at the
+   design-day peak (daily rate first, the hourly peak as a check), rough cost. Growth (volume and SKU) is applied
+   here, shared by every scenario.
+7. `report/` — comparison scorecard and story across the scenarios; one self-contained HTML file (inline SVG
+   charts, light/dark, hover tooltips, "how it's calculated" per chart).
 
 ## Commands
 ```
