@@ -40,7 +40,7 @@ from .classify import classify, list_sources
 from .read import read_headers, read_raw
 from .readers import Source, UnreadableFileError, as_source, read as read_source
 from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES, normalise_header
-from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
+from .units import LENGTH_TO_IN, VOLUME_TO_IN3, WEIGHT_TO_LB, assess, describe, header_unit
 from .units import expected_ranges as _expected
 from .packlevels import combine_pack_levels
 
@@ -268,7 +268,7 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
             out[f.name] = vals
         elif f.kind == "text":
             out[f.name] = col.astype("string")
-        elif f.kind in ("length", "weight", "count", "qty", "stock", "cases"):
+        elif f.kind in ("length", "weight", "volume", "count", "qty", "stock", "cases"):
             num, failed = coerce.to_number(col)
             if failed.any():
                 ex = col[failed].drop_duplicates().head(3).tolist()
@@ -498,6 +498,18 @@ def _units(out, m, profile, params, add):
         rows.append(dict(group=g, length=lu, weight=wu, method="+".join(sorted(methods)),
                          plausible=bool(chosen.plausible), median_longest_in=chosen.median_longest_in,
                          median_density_lb_ft3=chosen.median_density_lb_ft3))
+    # a unit volume's unit is never guessed from the numbers: the header names it, or the client's saved units
+    for f in [f for f in TABLES["item_master"] if f.kind == "volume" and f.name in out]:
+        vu = header_unit(_source_header(m, f.name), "volume") or (profile.units.get("volume") if profile else None)
+        if vu is None:
+            if out[f.name].notna().any():
+                add("volume_unit_unknown", "warn", f"{f.name} ('{_source_header(m, f.name)}'): the unit is not "
+                    "named, so the values are left blank. Name it in the header, e.g. 'Volume (m3)'.", fld=f.name)
+            out[f.name] = float("nan")
+        else:
+            out[f.name] = out[f.name] * VOLUME_TO_IN3[vu]
+            if vu != "in3":
+                add("unit_converted", "info", f"{f.name} volume converted {vu} -> in3.", fld=f.name)
     # pallet sizes (from package levels) are in the file's units: convert them as the case (else the unit) was
     pal = [f for f in TABLES["item_master"] if f.group == "pallet" and f.name in out]
     decided = {r["group"]: r for r in rows}

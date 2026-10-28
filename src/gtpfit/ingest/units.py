@@ -28,17 +28,23 @@ from .params import IngestParams
 LENGTH_TO_IN = {"in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4, "ft": 12.0, "m": 100 / 2.54}
 WEIGHT_TO_LB = {"lb": 1.0, "kg": 1 / 0.45359237, "oz": 1 / 16, "g": 1 / 453.59237}
 CUBIC_IN_PER_FT3 = 1728
+# a unit volume: converted to cubic inches; its unit is only ever read from the header or the saved units
+VOLUME_TO_IN3 = {"in3": 1.0, "ft3": 1728.0, "mm3": 1 / 2.54 ** 3 / 1000, "cm3": 1 / 2.54 ** 3,
+                 "l": 1000 / 2.54 ** 3, "m3": 1e6 / 2.54 ** 3}
 
 _HINTS = {
     "length": [("mm", r"\bmm\b|millimet"), ("cm", r"\bcm\b|centimet"), ("ft", r"\bft\b|\bfeet\b|\bfoot\b"),
                ("m", r"\(m\)|\bmetres?\b|\bmeters?\b"), ("in", r"\bin\b\)?$|\(in\)|\binch|\"")],
     "weight": [("kg", r"\bkgs?\b|kilo"), ("oz", r"\boz\b|ounce"), ("lb", r"\blbs?\b|pound"),
                ("g", r"\(g\)|\bgr\b|\bgrams?\b|\bg$")],
+    "volume": [("mm3", r"\bmm(3|³)"), ("cm3", r"\bcm(3|³)|\bcc\b|cubic cent"),
+               ("m3", r"\bm(3|³)|\bcbm\b|cubic met"), ("ft3", r"\bft(3|³)|\bcu ?ft\b|\bcft\b|cubic f"),
+               ("in3", r"\bin(3|³)|\bcu ?in\b|cubic inch"), ("l", r"\(l\)|\blitres?\b|\bliters?\b|\bl$")],
 }
 
 
 def header_unit(header: str, kind: str) -> str | None:
-    h = str(header).lower().strip()
+    h = re.sub(r"[_\-]+", " ", str(header).lower()).strip()  # pce_lgth_mm: database exports put the unit last
     for unit, pat in _HINTS[kind]:
         if re.search(pat, h):
             return unit

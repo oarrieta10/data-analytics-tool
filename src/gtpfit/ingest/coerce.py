@@ -16,10 +16,15 @@ import pandas as pd
 DATE_FORMATS = ["%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%y", "%d/%m/%y", "%d.%m.%Y", "%Y/%m/%d",
                 "%m-%d-%Y", "%d-%m-%Y", "%Y%m%d", "%d-%b-%Y", "%d-%b-%y", "%b %d %Y",
                 "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
-                "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]  # database / JSON exports
+                "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",  # database / JSON exports
+                "%Y-%m-%d %H:%M:%S UTC", "%Y-%m-%d %H:%M:%S.%f UTC",                # warehouse exports in UTC
+                "%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M:%S %p", "%m/%d/%Y %I:%M %p"]  # 12-hour clock
 TIME_FORMATS = ["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p", "%H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]
 _THOUSANDS = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
+# Judging a date format needs a sample, not every value: timestamps to the microsecond make nearly every
+# value distinct.  Evenly spaced distinct values (no random draw); the full column is still parsed.
+DATE_DETECT_SAMPLE = 50_000
 
 
 def _no_fail(s):
@@ -44,9 +49,15 @@ def _parse_unique(s: pd.Series, fmt: str) -> tuple[pd.Series, pd.Series]:
     return out, s.notna() & out.isna()
 
 
-def date_fits(s: pd.Series) -> dict:
-    """Share of non-blank unique values each candidate format parses."""
+def _detect_sample(s: pd.Series) -> pd.Series:
     u = pd.Series(s.dropna().unique())
+    step = -(-len(u) // DATE_DETECT_SAMPLE)  # ceiling: at most DATE_DETECT_SAMPLE values
+    return u.iloc[::step] if step > 1 else u
+
+
+def date_fits(s: pd.Series) -> dict:
+    """Share of non-blank unique values (up to DATE_DETECT_SAMPLE, evenly spaced) each candidate format parses."""
+    u = _detect_sample(s)
     if u.empty:
         return {}
     return {f: float(pd.to_datetime(u, format=f, errors="coerce").notna().mean()) for f in DATE_FORMATS}
@@ -69,7 +80,7 @@ def choose_date_format(s: pd.Series, declared: str | None, min_share: float):
 
 
 def date_fits_one(s: pd.Series, fmt: str) -> float:
-    u = pd.Series(s.dropna().unique())
+    u = _detect_sample(s)
     return float(pd.to_datetime(u, format=fmt, errors="coerce").notna().mean()) if len(u) else 0.0
 
 
@@ -77,6 +88,9 @@ def to_date(s: pd.Series, fmt: str) -> tuple[pd.Series, pd.Series]:
     if fmt == "native":
         return s.dt.normalize().astype("datetime64[ns]"), _no_fail(s)
     out, failed = _parse_unique(s, fmt)
+    if ".%f" in fmt and failed.any():  # exports drop the fraction on whole seconds: 22:14:22 beside 22:14:22.55
+        again, still = _parse_unique(s[failed], fmt.replace(".%f", ""))
+        out[failed], failed = again, failed & still.reindex(s.index, fill_value=False)
     return out.dt.normalize().astype("datetime64[ns]"), failed
 
 

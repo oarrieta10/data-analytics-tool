@@ -59,6 +59,10 @@ ISSUE_TEXT: dict[str, IssueText] = {
     "empty_table": _T("A file has no rows",
                       "The file has a header but no data under it.",
                       "The table it was meant to supply is effectively missing."),
+    "volume_unit_unknown": _T("Unit volume without a unit",
+                              "The unit volume column does not say whether it is in cubic inches, cubic feet, "
+                              "m3 or litres, so its values were left blank.",
+                              "Sizes are checked and estimated without it; name the unit in the header to use it."),
     "unreadable_file": _T("A file could not be opened",
                           "The file is password protected, open in another program, or damaged, so none of it "
                           "was read.",

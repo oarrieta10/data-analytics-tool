@@ -136,6 +136,9 @@ python -m pytest -q
   - **Related tables:** the site filter also applies to inventory and receipts when they have a site column,
     and warns when they don't. The waterfall's removed counts plus the in-scope rows always equal all rows,
     and saving writes `_scope/scope_summary.csv`.
+- **Unit volume** (`unit_volume`, optional, cubic inches): for masters that give each unit's volume, often instead
+  of its sizes. Its unit is only ever read from the header (m3, cm3, ft3, in3, litres) or the client's saved units,
+  never guessed from the numbers; without one the values are left blank with `volume_unit_unknown`.
 - **Package levels** (`ingest/packlevels.py`): an item master with one row per package (item / case / pallet,
   mapped `pack_level`) becomes one row per SKU: item size from the unit-level row (`pack_unit_levels`, holding 1),
   case pack and case size from the smallest case-level row, pallet quantity and size from the smallest pallet row.

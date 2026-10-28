@@ -23,7 +23,8 @@ from pathlib import Path
 
 import yaml
 
-_UNIT_TAIL = r"(in|inch|inches|cm|mm|m|ft|lb|lbs|pound|pounds|kg|kgs|g|gr|grams|oz|ounces|ea|each)"
+_UNIT_TAIL = (r"(in|inch|inches|cm|mm|m|ft|lb|lbs|pound|pounds|kg|kgs|g|gr|grams|oz|ounces|ea|each"
+              r"|m3|cm3|mm3|ft3|in3|cbm|cuft)")
 
 
 def normalise_header(h: str) -> str:
@@ -68,6 +69,10 @@ TABLES: dict[str, list[Field]] = {
         Field("unit_weight", "weight", True, ("unit weight", "each weight", "item weight", "weight",
                                                "ea weight", "net weight", "std unit weight", "unit wt"),
               "unit"),
+        # some masters give each unit's volume (often instead of its sizes); converted to cubic inches
+        Field("unit_volume", "volume", False, ("unit volume", "each volume", "item volume", "unit cube",
+                                               "each cube", "item cube", "piece volume", "pce volume", "cube",
+                                               "volume"), "unit"),
         Field("case_qty", "count", True, ("case pack", "case qty", "case quantity", "units per case", "pack size",
                                            "master pack qty", "inner pack", "case pack qty", "upc per case",
                                            "std case quantity", "std case qty", "qpc", "qty per case",
@@ -145,7 +150,7 @@ TABLES: dict[str, list[Field]] = {
 FIELD_LABEL = {
     "sku": "SKU / item number", "description": "Description", "category": "Category",
     "subcategory": "Sub-category", "unit_l": "Unit length", "unit_w": "Unit width", "unit_h": "Unit height",
-    "unit_weight": "Unit weight", "case_qty": "Case quantity", "case_l": "Case length", "case_w": "Case width",
+    "unit_weight": "Unit weight", "unit_volume": "Unit volume", "case_qty": "Case quantity", "case_l": "Case length", "case_w": "Case width",
     "case_h": "Case height", "case_weight": "Case weight",
     "pack_level": "Package level", "pallet_qty": "Units per pallet", "pallet_l": "Pallet length",
     "pallet_w": "Pallet width", "pallet_h": "Pallet height", "pallet_weight": "Pallet weight", "order_id": "Order number", "order_date": "Pick / ship date",
@@ -165,6 +170,7 @@ FIELD_HELP = {
         "category": "Product category.", "subcategory": "Product sub-category.",
         "unit_l": "Length of one unit (each).", "unit_w": "Width of one unit.", "unit_h": "Height of one unit.",
         "unit_weight": "Weight of one unit.",
+        "unit_volume": "Volume of one unit, if given (say the unit, e.g. m3 or cubic feet).",
         "case_qty": "Units per case (case pack / QPC).",
         "case_l": "Case length.", "case_w": "Case width.", "case_h": "Case height.", "case_weight": "Case weight.",
         "pack_level": "Package level when the file has one row per package (item / case / pallet); the rows are "

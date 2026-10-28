@@ -19,6 +19,7 @@ from .readers import SUPPORTED
 from .schema import FIELD_HELP, FIELD_LABEL, REQUIRED_TABLES, TABLES, TABLE_LABEL
 
 _FORMAT = {"id": "text", "text": "text", "length": "inches or cm (say which)", "weight": "lb or kg (say which)",
+           "volume": "cubic feet, cubic inches or m3 (say which)",
            "count": "units per case", "qty": "units (eaches)", "cases": "number of full cases",
            "stock": "units on hand", "date": "a date (any common format)", "time": "time of day"}
 _WHY = {"item_master": "container fit, cube and storage",
