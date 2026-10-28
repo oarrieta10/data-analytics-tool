@@ -43,7 +43,7 @@ def test_texts_are_general():
 
 
 def test_assortment_presets_set_the_three_bands():
-    assert set(ASSORTMENTS) == {"consumer goods", "industrial", "grocery"}
+    assert set(ASSORTMENTS) == {"consumer goods", "industrial", "grocery", "automotive / spare parts"}
     d = dataclasses.asdict(IngestParams())
     assert {k: d[k] for k in BANDS} == ASSORTMENTS[DEFAULT_ASSORTMENT]  # the defaults are the consumer preset
     assert {f.name for f in FIELDS if meta(f.name).get("via") == "assortment"} == set(BANDS)
@@ -53,3 +53,14 @@ def test_assortment_presets_set_the_three_bands():
     assert ASSORTMENTS["industrial"]["density_lb_ft3"][1] > ASSORTMENTS["consumer goods"]["density_lb_ft3"][1]
     with pytest.raises(ValueError):
         assortment_bands("furniture")
+
+
+def test_automotive_preset_spans_fasteners_to_body_panels():
+    auto = ASSORTMENTS["automotive / spare parts"]
+    lo, hi = auto["unit_longest_side_in"]
+    assert lo < 1 and hi >= 96  # sub-inch fasteners and multi-foot moldings both pass
+    assert auto["density_lb_ft3"][1] < 490  # nothing denser than solid steel
+    for other in ("consumer goods", "industrial"):
+        for band in BANDS:
+            assert auto[band][0] <= ASSORTMENTS[other][band][0] and auto[band][1] >= ASSORTMENTS[other][band][1]
+    assert "automotive" in ASSORTMENT_HELP["effect"].lower()

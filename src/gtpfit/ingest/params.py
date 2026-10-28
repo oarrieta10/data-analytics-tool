@@ -236,14 +236,25 @@ ASSORTMENTS = {
     # case, snacks and paper goods light.
     "grocery": dict(unit_longest_side_in=(2.0, 20.0), case_longest_side_in=(6.0, 30.0),
                     density_lb_ft3=(3.0, 70.0)),
+    # Automotive / vehicle spare parts: fasteners under an inch to body panels and
+    # moldings of several feet; light hollow plastic trim to solid metal parts.
+    # Set from the 1st-99th percentiles of a parts catalogue's sized items
+    # (0.75-120 in, 0.14-387 lb/ft3, cases 9-96 in), widened; the density ceiling
+    # stays under solid steel (490 lb/ft3), the floor near packing foam.
+    # Source: consultant judgement on one parts catalogue.  Confidence: low.
+    "automotive / spare parts": dict(unit_longest_side_in=(0.2, 120.0), case_longest_side_in=(4.0, 120.0),
+                                     density_lb_ft3=(0.3, 450.0)),
 }
 DEFAULT_ASSORTMENT = "consumer goods"
 ASSORTMENT_HELP = dict(
     what="The kind of goods the client stores. It sets the size and density ranges used to check that the "
          "declared or detected units are plausible.",
     why="mixed consumer goods, the most common assortment",
-    effect="Industrial widens the ranges toward small dense parts and long items; grocery narrows sizes and "
-           "allows liquids' weight. A wrong choice flags good units or lets wrong ones through.")
+    effect="Industrial widens the ranges toward small dense parts and long items; automotive / spare parts "
+           "widens them further, from fasteners to body panels, so only gross errors stand out and units in "
+           "inches or centimetres are harder to tell apart from the numbers alone (name them in the headers); "
+           "grocery narrows sizes and allows liquids' weight. A wrong choice flags good units or lets wrong ones "
+           "through.")
 
 
 def assortment_tooltip() -> str:

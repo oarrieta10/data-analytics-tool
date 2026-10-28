@@ -27,7 +27,8 @@ from .peers import peer_groups
 from .status import activity, items_to_measure, score, sku_status
 from .text import QUALITY_TEXT
 
-__all__ = ["QualityParams", "QualityResult", "assess", "run_quality", "write_outputs", "QUALITY_TEXT", "CODES"]
+__all__ = ["QualityParams", "QualityResult", "assess", "run_quality", "write_outputs", "saved_params",
+           "QUALITY_TEXT", "CODES"]
 
 
 @dataclass
@@ -78,6 +79,13 @@ def assess(tbls: dict, qp: QualityParams | None = None, ip: IngestParams | None 
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in dataclasses.asdict(qp).items()},
     }
     return QualityResult(flags, status, summary, items_to_measure(status, flags), qp)
+
+
+def saved_params(client: str) -> QualityParams:
+    """The client's quality settings (quality: in client.yaml), defaults for the rest."""
+    saved = workspace.read_client_yaml(client).get("quality") or {}
+    names = {f.name for f in dataclasses.fields(QualityParams)}
+    return QualityParams(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in saved.items() if k in names})
 
 
 def run_quality(client: str, params: QualityParams | None = None) -> QualityResult:

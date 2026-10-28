@@ -48,6 +48,13 @@ interactive HTML report.
   `peers.py` (sub-category → category → all, robust z in log space), `status.py` (status, readiness for unit / case
   fit, weighted score, items to measure), `text.py` (`QUALITY_TEXT`), `params.py` (`QualityParams`). Reads
   `tables.load` only; writes `data/workspace/<client>/_quality/`; never changes a value
+- `src/gtpfit/backfill/` — estimates for item sizes quality cannot trust: `targets.py` (fill missing / zero /
+  placeholder / copied values; keep every other doubt, unit slips included, with the estimate beside it and a review
+  flag beyond `review_factor`; donors = trusted SKUs), `estimate.py` (case of one → nearest trusted neighbours by
+  char n-gram TF-IDF of the description + case / known sizes + category → peer median; scaled to a given unit
+  volume), `params.py` (`BackfillParams`), `text.py` (`BACKFILL_TEXT`). Runs quality first; estimates active SKUs
+  only; writes `data/workspace/<client>/_backfill/` (values, item_master_backfilled, summary with the gap left:
+  orphans / kept doubts / not estimated)
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)

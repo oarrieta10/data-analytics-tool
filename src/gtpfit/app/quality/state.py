@@ -13,7 +13,7 @@ import json
 import streamlit as st
 
 from gtpfit import workspace
-from gtpfit.quality import QualityParams, run_quality, write_outputs
+from gtpfit.quality import QualityParams, run_quality, saved_params as quality_saved_params, write_outputs
 from gtpfit.scope import load_scope
 
 
@@ -36,9 +36,7 @@ def client() -> str:
 
 
 def saved_params(name: str) -> QualityParams:
-    saved = workspace.read_client_yaml(name).get("quality") or {}
-    names = {f.name for f in dataclasses.fields(QualityParams)}
-    return QualityParams(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in saved.items() if k in names})
+    return quality_saved_params(name)
 
 
 def save_params(name: str, p: QualityParams) -> None:
