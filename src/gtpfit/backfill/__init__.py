@@ -34,7 +34,7 @@ from .params import BackfillParams
 from .targets import DIMS, UNIT_FIELDS, plan
 from .text import BACKFILL_TEXT
 
-__all__ = ["BackfillParams", "BackfillResult", "assess", "run_backfill", "write_outputs", "saved_params",
+__all__ = ["BackfillParams", "BackfillResult", "assess", "run_backfill", "write_outputs", "saved_params", "load_items",
            "BACKFILL_TEXT", "METHODS", "ACTIONS"]
 
 CASE_FIELDS = {"case", "case_l", "case_w", "case_h", "case_weight", "case_qty"}
@@ -182,6 +182,15 @@ def saved_params(client: str) -> BackfillParams:
     saved = workspace.read_client_yaml(client).get("backfill") or {}
     names = {f.name for f in dataclasses.fields(BackfillParams)}
     return BackfillParams(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in saved.items() if k in names})
+
+
+def load_items(client: str) -> pd.DataFrame:
+    """The item master later modules size from: backfill's output (estimated values filled, each with its method)
+    when backfill has run for the client, else the item master as ingested (tables.load)."""
+    f = workspace.client_dir(client) / "_backfill" / "item_master_backfilled.parquet"
+    if f.exists():
+        return pd.read_parquet(f)
+    return tables.load(client)["item_master"]
 
 
 def run_backfill(client: str, params: BackfillParams | None = None, validate: bool = True) -> BackfillResult:

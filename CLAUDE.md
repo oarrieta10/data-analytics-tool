@@ -64,7 +64,13 @@ interactive HTML report.
   utilization, design/average, peak-day coverage, percentile rank; "within N days" is judged only on work with N
   days left in the history), `design.py` (smallest capacity meeting per-channel SLAs by bisection, binding target
   named; `fallback_percentile` day without SLAs; `what_if`). Reproduces the consultant's capacity workbook
-  (`data/capacity model/`, local) exactly on the client it was built from: `tests/test_profile_real.py`
+  (`data/capacity model/`, local) exactly on the client it was built from: `tests/test_profile_real.py`.
+  Also `volumes.py` (daily / monthly / weekday, peak month ratio), `orders.py` (order profile, lines-per-order and
+  units-per-line distributions), `hourly.py` (from `pick_secs`; design-day peak hour), `velocity.py` (ABC by lines,
+  D = stock that never moved, cube moved and on hand), `stock.py` (days on hand, turns), `inbound.py` (receipts per
+  day, receiving capacity with the same engine). `run_profile` reads `tables.load` and sizes from
+  `backfill.load_items` (the backfilled item master when backfill has run); SLAs per channel are saved under
+  `profile: sla:` (`inbound_sla:` for receiving); writes `_profile/` (daily, abc, profile_summary.json)
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)
