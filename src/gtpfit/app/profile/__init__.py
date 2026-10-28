@@ -352,8 +352,11 @@ def page() -> None:
     settings_box = st.container()
     with settings_box:
         p = _settings(name)
-        st.button("Continue to Fit →", key="pf::to_fit", disabled=True,
-                  help="Fit (which container each SKU fits) is the next module; not built yet.")
+        if st.button("Continue to Fit →", key="pf::to_fit", type="primary",
+                     help="How many units of each SKU fit each container, and what limits the rest."):
+            st.session_state["fit::client"] = name
+            from gtpfit.app import pages
+            st.switch_page(pages.FIT)
     with top:
         sla = _targets(name, _channels(name, state._signature(name)), p.demand_unit)
     with body:

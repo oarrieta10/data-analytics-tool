@@ -1,0 +1,73 @@
+# Container catalogue: the storage containers the design stage fits SKUs into.  Specs only, no client data.
+#
+# Each container:
+#   id, name, system, supplier, status
+#   mode        units        loose units packed into the container (and its divider cells)
+#               case_on_tray one carton per tray; carton_range gives the cartons the tray takes
+#   inside      inside length / width / height, with unit (mm, cm or in)
+#   tare        the container's own weight (not what it carries)
+#   payload     what it carries, with unit (kg or lb); confidence: low marks a placeholder
+#   dividers    cell layouts besides the whole container: {name, cells, l_split, w_split}
+#   cell_utilisation  optional; share of a cell's volume usable by liquid cube (FitParams default otherwise)
+#   source, confidence  where the specs come from and how sure they are
+#
+# HaiPick System 3 (HPS3) and HaiPick Climb (HPC) only for now.  The 650 x 450 containers below come from HAI's tote
+# specification sheet; which system uses each is still to be confirmed, and the HPS3 standard totes are to be added.
+
+containers:
+  - id: hai_folding_tote_650x450x300
+    name: Folding tote 650 × 450 × 300
+    system: HaiPick (system to confirm)
+    supplier: HAI Robotics
+    status: moulded, available for sale
+    mode: units
+    inside: {l: 616, w: 420, h: 286, unit: mm}
+    tare: {value: 3.05, unit: kg}
+    payload: {value: 30, unit: kg, confidence: low, note: placeholder until HAI confirms the payload}
+    dividers: []
+    source: HAI tote specification sheet, standard configuration (received 2026-10-28)
+    confidence: high
+
+  - id: hai_stackable_tote_650x450x300
+    name: Stackable tote 650 × 450 × 300
+    system: HaiPick (system to confirm)
+    supplier: HAI Robotics
+    status: design completed, mould pending (45-day lead time, triggered by a commercial project)
+    mode: units
+    inside: {l: 617, w: 417, h: 286, unit: mm}
+    tare: {value: 2.95, unit: kg}
+    payload: {value: 30, unit: kg, confidence: low, note: placeholder until HAI confirms the payload}
+    dividers: []
+    source: HAI tote specification sheet, standard configuration (received 2026-10-28)
+    confidence: high
+
+  - id: hai_tray_650x450x70
+    name: Carton tray 650 × 450 × 70
+    system: HaiPick (system to confirm)
+    supplier: HAI Robotics
+    status: moulded, available for sale
+    mode: case_on_tray
+    inside: {l: 620, w: 426, h: 30, unit: mm}
+    tray_thickness: {value: 40, unit: mm}
+    carton_range: {l: [200, 600], w: [200, 400], h: [50, 460], unit: mm}
+    tare: {value: 2.25, unit: kg}
+    payload: {value: 30, unit: kg, confidence: low, note: placeholder until HAI confirms the payload}
+    dividers: []
+    source: HAI tote specification sheet, standard configuration (received 2026-10-28)
+    confidence: high
+
+  - id: autostore_bin_standard
+    name: AutoStore bin (competitor reference)
+    system: AutoStore
+    supplier: AutoStore
+    status: reference
+    mode: units
+    inside: {l: 23.74, w: 15.87, h: 12.28, unit: in}
+    payload: {value: 60, unit: lb, confidence: medium}
+    dividers:
+      - {name: "1/2", cells: 2, l_split: 2, w_split: 1}
+      - {name: "1/4", cells: 4, l_split: 2, w_split: 2}
+      - {name: "1/8", cells: 8, l_split: 4, w_split: 2}
+    cell_utilisation: 0.90
+    source: consultant's Power BI tool (GTP storage sizing), AutoStore bin and divider layouts
+    confidence: medium

@@ -69,7 +69,7 @@ def test_without_targets_the_percentile_day_is_the_fallback(tmp_path, monkeypatc
     assert s["design"]["method"] == "fallback_percentile"
     assert _metric(at, "Design capacity").value == f"{s['design']['capacity']:,}"
     assert "95th-percentile day" in _text(at)
-    assert at.button(key="pf::to_fit").disabled
+    assert not at.button(key="pf::to_fit").disabled
     for f in ("daily.parquet", "abc.parquet", "profile_summary.json"):
         assert (tmp_path / "ws" / client / "_profile" / f).exists()
 

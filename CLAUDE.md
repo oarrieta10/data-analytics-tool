@@ -75,6 +75,14 @@ interactive HTML report.
   day, receiving capacity with the same engine). `run_profile` reads `tables.load` and sizes from
   `backfill.load_items` (the backfilled item master when backfill has run); SLAs per channel are saved under
   `profile: sla:` (`inbound_sla:` for receiving); writes `_profile/` (daily, abc, profile_summary.json)
+- `src/gtpfit/fit/` — units per SKU × container × divider cell (layer 1 of the design stage): `tessellate.py`
+  (vectorised: 6 orientations, then the leftover length / width / height spaces, as in the `pbi/` tool; liquid
+  cube; weight cap), `containers.py` (the catalogue `src/gtpfit/catalog/containers.yaml`, or `GTPFIT_CATALOG`:
+  inside sizes in any unit, payload, divider layouts, `units` or `case_on_tray` mode with a carton range, source and
+  confidence required; a low-confidence payload is a placeholder, named in every result), `params.py`
+  (`FitParams`: cubing method, keep upright, liquid-cube utilisation). Fits active SKUs only; carries each SKU's
+  size provenance from `backfill.load_items`; writes `_fit/` (fit.parquet long, fit_summary.json). HAI containers:
+  only HaiPick System 3 and HaiPick Climb for now; payloads are placeholders until HAI confirms
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)
@@ -86,6 +94,9 @@ interactive HTML report.
     design capacity and the target that sets it (or the percentile-day fallback), KPIs, service by age, backlog
     chart, a what-if capacity, then volumes, order shape, hourly, ABC, stock (warns when inventory is a fixed number
     of days of demand), inbound
+  - `app/fit/` the Fit page: catalogue containers with sources and placeholders, share of SKUs / lines that fit each
+    container and cell, one container in detail (limits, units per container, by ABC, estimated sizes), SKU
+    look-up, add a container to the catalogue (source required)
   - `app/quality/`, `app/backfill/` one page each (settings drawn from the module's params with
     `widgets.control`, saved under `quality:` / `backfill:` in client.yaml; a cached run that also writes the
     module's outputs). Backfill shows readiness before → after, the gap left, the holdout table, filled and
