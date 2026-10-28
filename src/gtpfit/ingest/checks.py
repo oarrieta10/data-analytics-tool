@@ -59,6 +59,10 @@ ISSUE_TEXT: dict[str, IssueText] = {
     "empty_table": _T("A file has no rows",
                       "The file has a header but no data under it.",
                       "The table it was meant to supply is effectively missing."),
+    "unreadable_file": _T("A file could not be opened",
+                          "The file is password protected, open in another program, or damaged, so none of it "
+                          "was read.",
+                          "The table it supplies is missing until the file is fixed or replaced and re-scanned."),
     "header_mismatch": _T("Files for one table have different columns",
                           "Several files were given for the same table, but their columns differ.",
                           "They cannot be stacked safely; rows could land in the wrong fields."),
@@ -201,6 +205,7 @@ def explain(code: str) -> IssueText:
 NOT_ACCEPTABLE = {
     "unit_ambiguous": "choose the units this client uses on the Review step, or name them in the column headers",
     "unit_mismatch": "choose the units that fit on the Review step",
+    "unreadable_file": "remove the password, close the file or replace it, then re-scan the folder",
 }
 
 

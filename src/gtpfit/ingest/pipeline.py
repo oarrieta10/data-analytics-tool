@@ -38,7 +38,7 @@ from .mapping import Mapping, WmsProfile, mapping_from_profile, save_wms_profile
 from .params import IngestParams
 from .classify import classify, list_sources
 from .read import read_headers, read_raw
-from .readers import Source, as_source, read as read_source
+from .readers import Source, UnreadableFileError, as_source, read as read_source
 from .schema import KEEP_BLANK, REQUIRED_TABLES, TABLES, normalise_header
 from .units import LENGTH_TO_IN, WEIGHT_TO_LB, assess, describe, header_unit
 from .units import expected_ranges as _expected
@@ -160,8 +160,12 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     # -- headers first: the same layout is required to stack files
     headers, dupes = None, set()
     for p in paths:
-        h = read_headers(p)
-        dupes |= {x for i, x in enumerate(h) if x in h[:i]}
+        try:
+            h = read_headers(p)
+        except UnreadableFileError as e:
+            add("unreadable_file", "block", f"{p}: {e.reason}.")
+            return res
+        dupes |={x for i, x in enumerate(h) if x in h[:i]}
         if headers is not None and h != headers:
             add("header_mismatch", "block", f"{p} has different columns from {paths[0]}; "
                 "files for one table must share a layout.")
@@ -208,7 +212,11 @@ def ingest_table(sources, table: str, profile: WmsProfile | None = None, params:
     extras, too_many = _extra_candidates(paths[0], headers, used, dupes, params) if table == "orders" else ([], {})
     frames = []
     for p in paths:
-        df, meta = read_raw(p, columns=used + extras)
+        try:
+            df, meta = read_raw(p, columns=used + extras)
+        except UnreadableFileError as e:  # e.g. opened in Excel since Confirm
+            add("unreadable_file", "block", f"{p}: {e.reason}.")
+            return res
         if meta["encoding"] not in (None, "utf-8"):
             add("encoding_fallback", "info", f"{p} is not UTF-8; read as {meta['encoding']}.")
         n = meta["data_rows"]

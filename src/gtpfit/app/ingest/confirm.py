@@ -23,7 +23,7 @@ from gtpfit.ingest.coerce import choose_date_format, to_date
 from gtpfit.ingest.coverage import busiest_months
 from gtpfit.ingest.detect import summarize
 from gtpfit.ingest.mapping import saved_mapping_for
-from gtpfit.ingest.readers import headers as source_headers, read as read_source
+from gtpfit.ingest.readers import UnreadableFileError, headers as source_headers, read as read_source
 from gtpfit.ingest.schema import (FIELD_LABEL, REQUIRED_TABLES, TABLE_LABEL, TABLES, normalise_header,
                                   remember_synonym, synonyms)
 from gtpfit.ingest.units import header_unit
@@ -115,7 +115,8 @@ def _files_table(dets, sig: str) -> dict:
     view = pd.DataFrame({
         "File": [d.file.name for d in dets],
         "Sheet / table": [d.part or "" for d in dets],
-        "Looks like": [(state.USE_AS[d.table] + CONF[d.confidence]) if d.table else "Not data" for d in dets],
+        "Looks like": [(state.USE_AS[d.table] + CONF[d.confidence]) if d.table else
+                       "Can't read" if d.unreadable else "Not data" for d in dets],
         "Rows": ["—" if d.rows is None else f"{d.rows:,}" + (" ⚠ Excel limit" if d.at_excel_limit else "")
                  for d in dets],
         "Read as": [d.read_as for d in dets],
@@ -225,6 +226,11 @@ def show() -> None:
     st.markdown(f"**{summarize(files, dets).text}** in `{state.input_folder()}` (read in place)")
     st.subheader("What did we receive?")
     assign = _files_table(dets, sig)
+    bad = [d for d in dets if d.unreadable]
+    if bad:
+        st.warning(f"**{len(bad)} {'file' if len(bad) == 1 else 'files'} can't be read and will be skipped**; the "
+                   "rest are read as normal. Fix them and click **← Back**, then open the folder again:\n\n" +
+                   "\n".join(f"- `{d.label}`: {d.unreadable}" for d in bad), icon="🔒")
 
     blocking = []
     for t in TABLE_LABEL:
@@ -241,7 +247,12 @@ def show() -> None:
     prof = state.client_profile()
     mappings, problems, overrides, seen = {}, [], {}, {}
     for t in [t for t in TABLES if t in assign]:
-        mp, pr, auto, hdr = _mapping(t, assign[t][0], sig, prof)
+        try:
+            mp, pr, auto, hdr = _mapping(t, assign[t][0], sig, prof)
+        except UnreadableFileError as e:  # assigned by hand although it can't be read
+            st.error(f"{TABLE_LABEL[t]}: {e}. Choose another file or set it to Ignore.", icon="🔒")
+            problems.append(str(e))
+            continue
         mappings[t], problems, seen[t] = mp, problems + pr, hdr
         if mp != auto:
             overrides[t] = mp
@@ -251,9 +262,12 @@ def show() -> None:
     if "orders" in assign:
         col = mappings.get("orders", {}).get("order_date")
         p = IngestParams(**state.params_from_json(state.params_json()))
-        hint = order_hint(sig, tuple((str(s.path), s.part) for s in assign["orders"]), col,
-                          prof.date_format if prof else None, p.min_date_parse_share, p.peak_hint_ratio) \
-            if col else "Busiest months in this data: map the order date to see them."
+        try:
+            hint = order_hint(sig, tuple((str(s.path), s.part) for s in assign["orders"]), col,
+                              prof.date_format if prof else None, p.min_date_parse_share, p.peak_hint_ratio) \
+                if col else "Busiest months in this data: map the order date to see them."
+        except UnreadableFileError as e:
+            hint = f"Busiest months in this data: an order file can't be read ({e})."
     widgets.client_settings(hint)
     widgets.detection_settings()
 

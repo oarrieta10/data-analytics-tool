@@ -22,11 +22,17 @@ encoding sniffed), gzip and zip (read through), Excel .xlsx .xlsm .xls .xlsb
 the header skipped), JSON and JSON Lines, Parquet, Feather/Arrow, ORC, SQLite
 and DuckDB database files (parts = tables).
 Not handled: Access, live database connections, SQL dumps, fixed-width reports.
+
+Files that exist but cannot be opened (password protected, open in another
+program, damaged, zipped with an unreadable method) raise UnreadableFileError
+with a plain reason and what to do, never a raw crash.  A zip skips its
+unreadable members and keeps the rest; skipped_parts(path) names them.
 """
 from __future__ import annotations
 
 import atexit
 import codecs
+import functools
 import os
 import csv
 import datetime as dt
@@ -35,6 +41,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,8 +70,62 @@ HEADER_FILL = 0.6       # a header row has text in >= 60% of the widest row's co
 
 class UnsupportedFileError(ValueError):
     def __init__(self, path, looked_like: str):
+        self.looked_like = looked_like
         kinds = "\n".join(f"  - {k}: {v}" for k, v in SUPPORTED)
         super().__init__(f"{Path(path).name}: cannot read this file ({looked_like}). Supported types:\n{kinds}")
+
+
+class UnreadableFileError(ValueError):
+    """A file (or zip member) of a known kind that cannot be opened: password, lock, damage.  `reason` says
+    what is wrong and what to do, in plain words."""
+    def __init__(self, name, reason: str):
+        self.reason = reason
+        super().__init__(f"{name}: {reason}")
+
+
+PASSWORD = "password protected: open it, remove the password, save it and re-scan"
+LOCKED = "open in another program or not accessible: close it and re-scan"
+DAMAGED = "damaged or incomplete: ask the client to send it again"
+COMPRESSION = "zipped with a compression method that can't be read: re-zip it with standard settings"
+DATABASE = "the database is damaged or encrypted: ask the client to send it again"
+TOO_BIG = "too large to open on this machine"
+
+
+def unreadable_reason(e: BaseException) -> str:
+    """Why a file could not be read, in plain words with what to do."""
+    if isinstance(e, UnreadableFileError):
+        return e.reason
+    if isinstance(e, UnsupportedFileError):
+        return e.looked_like
+    text = str(e).lower()
+    if "encrypt" in text or "password" in text:
+        return PASSWORD
+    if isinstance(e, PermissionError):
+        return LOCKED
+    if isinstance(e, (zipfile.BadZipFile, gzip.BadGzipFile, EOFError, zlib.error)):
+        return DAMAGED
+    if isinstance(e, NotImplementedError) and "compression" in text:
+        return COMPRESSION
+    if isinstance(e, sqlite3.DatabaseError):
+        return DATABASE
+    if isinstance(e, MemoryError):
+        return TOO_BIG
+    first = (str(e).splitlines() or [""])[0][:200]
+    return f"can't be read ({type(e).__name__}: {first})"
+
+
+def _plain_errors(fn):
+    """Public readers raise UnreadableFileError for anything that is not already a ValueError (those ask the
+    consultant to choose, or say the file is not data) or a missing file."""
+    @functools.wraps(fn)
+    def wrap(source, *a, **k):
+        try:
+            return fn(source, *a, **k)
+        except (ValueError, FileNotFoundError):
+            raise
+        except Exception as e:
+            raise UnreadableFileError(as_source(source), unreadable_reason(e)) from e
+    return wrap
 
 
 @dataclass(frozen=True)
@@ -123,6 +184,7 @@ def _detect_bytes(head: bytes, name: str, zip_names=None) -> str:
     return "delimited"
 
 
+@_plain_errors
 def detect_format(path) -> str:
     path = Path(path)
     if not path.is_file():
@@ -135,7 +197,7 @@ def detect_format(path) -> str:
             with zipfile.ZipFile(path) as z:
                 names = z.namelist()
         except zipfile.BadZipFile:
-            raise UnsupportedFileError(path, "it is a damaged zip file")
+            raise UnreadableFileError(path.name, DAMAGED)
     return _detect_bytes(head, path.name, names)
 
 
@@ -161,22 +223,44 @@ def _extracted(path: Path, member: str | None) -> Path:
     return _EXTRACTED[key]
 
 
+_SKIPPED: dict = {}  # (zip path, mtime) -> [(member, reason)]: members parts() could not read
+
+
+def _zip_key(path: Path) -> tuple:
+    return str(path), path.stat().st_mtime_ns
+
+
 def _zip_members(path: Path) -> list:
-    out = []
+    """Data members of a zip; password-protected or unreadable ones are recorded in _SKIPPED, not opened."""
+    out, skipped = [], []
     with zipfile.ZipFile(path) as z:
         for info in z.infolist():
             n = info.filename
             if info.is_dir() or n.startswith("__MACOSX/") or Path(n).name.startswith("."):
                 continue
-            with z.open(n) as f:
-                head = f.read(8192)
+            if info.flag_bits & 0x1:  # encrypted member: opening it needs the password
+                skipped.append((n, PASSWORD))
+                continue
+            try:
+                with z.open(n) as f:
+                    head = f.read(8192)
+            except Exception as e:
+                skipped.append((n, unreadable_reason(e)))
+                continue
             try:
                 fmt = _detect_bytes(head, n)
             except UnsupportedFileError:
                 continue
             if fmt not in ("delimited", "json") or Path(n).suffix.lower() in DATA_EXT:
                 out.append(n)
+    _SKIPPED[_zip_key(path)] = skipped
     return out
+
+
+def skipped_parts(path) -> list:
+    """[(zip member, reason)] that the last parts(path) could not read; [] for anything but a zip."""
+    path = Path(path)
+    return list(_SKIPPED.get(_zip_key(path), [])) if path.is_file() else []
 
 
 def _resolve(src: Source) -> Source:
@@ -282,7 +366,25 @@ def _excel(fn, path):
             return fn(eng)
         except Exception as e:  # try the next engine; report the first failure if none works
             err = err or e
+    if _office_encrypted(path) or unreadable_reason(err) == PASSWORD:
+        raise UnreadableFileError(Path(path).name, PASSWORD)
     raise UnsupportedFileError(path, f"Excel could not be opened: {err}")
+
+
+_ENCRYPTED_PACKAGE = "EncryptedPackage".encode("utf-16-le")  # the stream Office writes for a password-saved file
+
+
+def _office_encrypted(path: Path) -> bool:
+    """An OLE2 file holding an EncryptedPackage stream: an .xlsx / .xlsm / .xlsb saved with a password."""
+    with open(path, "rb") as f:
+        if not f.read(8).startswith(b"\xd0\xcf\x11\xe0"):
+            return False
+        tail = b""
+        while chunk := f.read(1 << 20):
+            if _ENCRYPTED_PACKAGE in tail + chunk:
+                return True
+            tail = chunk[-len(_ENCRYPTED_PACKAGE):]
+    return False
 
 
 def _header_row(rows: pd.DataFrame) -> int:
@@ -541,26 +643,36 @@ REGISTRY = {r.name: r for r in (_Delimited(), _Excel(), _Json(), _Parquet(), _Ar
 
 # ---- public API -----------------------------------------------------------------------------
 
+@_plain_errors
 def parts(path) -> list | None:
-    """Sheets / tables / zip members a file holds (None = a single table)."""
+    """Sheets / tables / zip members a file holds (None = a single table).  Zip members that cannot be read
+    are left out and named by skipped_parts(path)."""
     path = Path(path)
     fmt = detect_format(path)
     if fmt == "gzip":
         return parts(_extracted(path, None))
     if fmt == "zip":
         out = []
-        for m in _zip_members(path):
-            inner = parts(_extracted(path, m))
+        members = _zip_members(path)
+        skipped = _SKIPPED[_zip_key(path)]
+        for m in members:
+            try:
+                inner = parts(_extracted(path, m))
+            except Exception as e:  # one bad member must not hide the others
+                skipped.append((m, unreadable_reason(e)))
+                continue
             out += [m] if inner is None else [f"{m}|{p}" for p in inner]
         return out
     return REGISTRY[fmt].parts(path)
 
 
+@_plain_errors
 def headers(source) -> list:
     s = _resolve(as_source(source))
     return REGISTRY[detect_format(s.path)].headers(s.path, s.part)
 
 
+@_plain_errors
 def read(source, columns=None, limit: int | None = None) -> tuple[pd.DataFrame, dict]:
     """limit: read only the first rows (previews); data_rows then counts those rows only."""
     src = as_source(source)
@@ -580,6 +692,7 @@ def read(source, columns=None, limit: int | None = None) -> tuple[pd.DataFrame, 
 _DELIMS = {",": "comma", "\t": "tab", "|": "pipe", ";": "semicolon"}
 
 
+@_plain_errors
 def describe(source) -> str:
     """How a source is read, in plain words: "pipe-delimited, UTF-8 (gzip)", "Excel sheet 'Data'"."""
     src = as_source(source)

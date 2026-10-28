@@ -27,7 +27,9 @@ interactive HTML report.
     extension/delimiter/encoding), .gz/.zip, Excel .xlsx/.xlsm/.xls/.xlsb (python-calamine, fallbacks
     openpyxl/xlrd/pyxlsb; title rows skipped), JSON/JSONL, Parquet, Feather/Arrow, ORC, SQLite, DuckDB.
     A `Source(path, part)` is a file or one sheet / table / zip member. Not handled: Access, live DB
-    connections, SQL dumps, fixed-width reports.
+    connections, SQL dumps, fixed-width reports. A file or zip member that can't be opened (password, open in
+    another program, damaged) raises `UnreadableFileError` with a plain reason; detect lists it as "Can't read",
+    the rest of the folder goes on, and ingest blocks with `unreadable_file` (not acceptable).
   - `classify.py` guess the table each source holds (consultant confirms) · `mapping.py` auto-match, profile storage,
     `saved_mapping_for` (reuse a client's last confirmed mapping when the headers overlap)
   - `coerce.py` types, date-format detection · `units.py` header/profile/data unit decision

@@ -257,7 +257,7 @@ def test_cli_accept_needs_code_equals_reason(tmp_path, capsys):
 def test_unit_blocks_cannot_be_accepted(tmp_path, capsys):
     from gtpfit.ingest.checks import NOT_ACCEPTABLE, normalise_accept
     from gtpfit.ingest.cli import main
-    assert set(NOT_ACCEPTABLE) == {"unit_ambiguous", "unit_mismatch"}
+    assert set(NOT_ACCEPTABLE) == {"unit_ambiguous", "unit_mismatch", "unreadable_file"}
     for key in ("unit_ambiguous", "item_master:unit_ambiguous", "item_master:unit_mismatch"):
         with pytest.raises(ValueError, match="cannot be accepted"):
             normalise_accept({key: "looked fine to me"})

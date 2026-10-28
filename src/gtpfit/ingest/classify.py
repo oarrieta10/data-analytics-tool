@@ -18,7 +18,8 @@ from pathlib import Path
 
 from .mapping import suggest_mapping
 from .params import IngestParams
-from .readers import DATA_EXT, Source, UnsupportedFileError, as_source, detect_format, headers, parts
+from .readers import (DATA_EXT, Source, UnreadableFileError, UnsupportedFileError, as_source, detect_format,
+                      headers, parts)
 from .schema import TABLES, could_be
 
 TRANSACTIONS = ("orders", "receipts")  # their required date makes them a stronger signal than column counts
@@ -33,6 +34,7 @@ class Guess:
     confidence: str                      # high | medium | low | none
     ranking: list = field(default_factory=list)   # [(table, score, matched fields)] best first
     reason: str = ""
+    unreadable: str = ""                 # why the source could not be opened (password, lock, damage), if so
 
     @property
     def matched(self) -> list:
@@ -44,6 +46,8 @@ def classify(source, params: IngestParams | None = None) -> Guess:
     params = params or IngestParams()
     try:
         hdr = headers(src)
+    except UnreadableFileError as e:
+        return Guess(src, None, "none", reason=f"Can't read: {e.reason}", unreadable=e.reason)
     except (UnsupportedFileError, ValueError) as e:
         return Guess(src, None, "none", reason=str(e).splitlines()[0])
     ranking, ok = [], {}

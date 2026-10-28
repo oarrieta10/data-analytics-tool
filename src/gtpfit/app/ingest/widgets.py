@@ -265,7 +265,9 @@ def block_cards(result) -> None:
                              help="Records the request (it appears in the data receipt); the block stays open."):
                     requested.remove(key) if asked else requested.append(key)
                     st.rerun()
-                if first.code in NOT_ACCEPTABLE:  # accepting would pass the sizes through unconverted
+                if first.code == "unreadable_file":  # nothing was read, so there is nothing to accept
+                    c2.caption(f"This block can't be accepted: {NOT_ACCEPTABLE[first.code]}.")
+                elif first.code in NOT_ACCEPTABLE:  # accepting would pass the sizes through unconverted
                     c2.caption("This block can't be accepted as it is: the sizes would go through unconverted, "
                                "read as inches and pounds. Choose the units above, or ask the client.")
                 else:
