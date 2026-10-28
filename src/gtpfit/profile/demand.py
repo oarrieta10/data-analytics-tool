@@ -73,7 +73,7 @@ def daily_demand(tables: dict, line_definition: str = "row", p: ProfileParams | 
         d = lines.assign(_d=day, _c=ch).drop_duplicates(["order_id", "_c"]).groupby(["_d", "_c"]).size()
     else:
         d = pd.Series(1.0, index=lines.index).groupby([day, ch]).sum()
-    demand = d.unstack(fill_value=0.0).reindex(cal.days, fill_value=0.0).astype(float)
+    demand = d.astype(float).unstack(fill_value=0.0).reindex(cal.days, fill_value=0.0)
     demand.columns = [str(c) for c in demand.columns]
     demand.index.name = "date"
     return demand, open_

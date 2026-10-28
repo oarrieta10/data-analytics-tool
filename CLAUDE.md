@@ -78,6 +78,10 @@ interactive HTML report.
   - `app/ingest/` guided flow 1 Choose folder → 2 Confirm files (+ client settings) → 3 Review → 4 Done (`state.py` session,
     folder dialog, per-client memory; `widgets.py` shared pieces). Input is always one folder (native dialog in
     a subprocess, a pasted path, or a recent folder), read in place: nothing copied, nothing written into it
+  - `app/profile/` the Profile page: service targets per channel in two editable tables (saved per client), the
+    design capacity and the target that sets it (or the percentile-day fallback), KPIs, service by age, backlog
+    chart, a what-if capacity, then volumes, order shape, hourly, ABC, stock (warns when inventory is a fixed number
+    of days of demand), inbound
   - `app/quality/`, `app/backfill/` one page each (settings drawn from the module's params with
     `widgets.control`, saved under `quality:` / `backfill:` in client.yaml; a cached run that also writes the
     module's outputs). Backfill shows readiness before → after, the gap left, the holdout table, filled and

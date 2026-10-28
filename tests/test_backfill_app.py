@@ -77,7 +77,7 @@ def test_readiness_tiles_match_the_summary_file(tmp_path, monkeypatch, scope_res
     assert s["actions"]["filled"] == BLANKED
     text = _text(at)
     assert f"{BLANKED} filled" in text and "still not ready" in text
-    assert at.button(key="bf::to_profile").disabled
+    assert not at.button(key="bf::to_profile").disabled
     for f in ("values.parquet", "item_master_backfilled.parquet", "backfill_summary.json"):
         assert (tmp_path / "ws" / client / "_backfill" / f).exists()
 

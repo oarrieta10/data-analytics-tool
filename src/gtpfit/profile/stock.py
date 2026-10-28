@@ -24,6 +24,18 @@ from .params import ProfileParams
 from .velocity import average_on_hand, unit_cube_ft3
 
 DAYS_PER_YEAR = 365
+UNIFORM_MIN_SKUS = 20       # enough moving SKUs to judge the spread of days on hand
+UNIFORM_SPREAD = 1.01       # 90th / 10th percentile of days on hand at most this: every SKU holds the same days
+
+
+def _uniform(days: pd.Series) -> bool:
+    """True when (almost) every moving SKU holds the same days of its own demand: real stock never does, so the
+    inventory was probably derived from the orders rather than taken from the warehouse system."""
+    d = days[np.isfinite(days) & (days > 0)]
+    if len(d) < UNIFORM_MIN_SKUS:
+        return False
+    lo, hi = np.percentile(d, [10, 90])
+    return bool(lo > 0 and hi / lo <= UNIFORM_SPREAD)
 
 
 @dataclass
@@ -68,6 +80,7 @@ def stock(tables: dict, items: pd.DataFrame | None, line_definition: str = "row"
                "days_on_hand": held / total_per_day if total_per_day else None,
                "turns": float(units.sum() * DAYS_PER_YEAR / span / held) if span and held else None,
                "median_days_on_hand": float(moving["days_on_hand"].median()) if len(moving) else None,
+               "uniform_days_on_hand": _uniform(moving["days_on_hand"]),
                "no_movement_skus": int(((s["units"] == 0) & (s["avg_on_hand"] > 0)).sum()),
                "no_movement_share_of_stock": float(s.loc[s["units"] == 0, "avg_on_hand"].sum() / held) if held else 0.0}
     return Stock(s.reset_index(), summary)

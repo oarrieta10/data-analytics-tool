@@ -91,6 +91,18 @@ def test_stock_days_on_hand_and_turns():
     assert not stock({"orders": ORDERS}, ITEMS, "row", P).summary["available"]
 
 
+def test_stock_that_is_a_fixed_number_of_days_for_every_sku_is_flagged():
+    rng = np.random.default_rng(2)
+    skus = [f"S{i}" for i in range(40)]
+    o = pd.DataFrame({"order_id": [f"o{i}" for i in range(400)], "sku": rng.choice(skus, 400),
+                      "qty": rng.integers(1, 5, 400), "order_date": pd.Timestamp("2025-03-03")})
+    units = o.groupby("sku").qty.sum()
+    derived = pd.DataFrame({"sku": units.index, "on_hand": units.to_numpy() * 7.0, "snapshot_date": pd.Timestamp("2025-03-03")})
+    assert stock({"orders": o, "inventory": derived}, ITEMS, "row", P).summary["uniform_days_on_hand"]
+    real = derived.assign(on_hand=rng.integers(1, 500, len(derived)))
+    assert not stock({"orders": o, "inventory": real}, ITEMS, "row", P).summary["uniform_days_on_hand"]
+
+
 def test_inbound_daily_receipts_and_design():
     rec = pd.DataFrame({"receipt_id": ["r1", "r1", "r2", "r3"], "sku": ["A", "B", "A", "C"], "qty": [10, 5, 20, 1],
                         "receipt_date": pd.to_datetime(["2025-03-03", "2025-03-03", "2025-03-04", "2025-03-05"])})

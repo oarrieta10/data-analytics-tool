@@ -219,8 +219,11 @@ def page() -> None:
     with settings_box:
         p = _settings(name)
         st.caption("Not done here: case packs and case sizes, and SKUs ordered but missing from the item master.")
-        st.button("Continue to Profile →", key="bf::to_profile", disabled=True,
-                  help="Profile (volumes, design day, order profile) is the next module; not built yet.")
+        if st.button("Continue to Profile →", key="bf::to_profile", type="primary",
+                     help="Volumes, order shape, ABC, and the design capacity from service targets."):
+            st.session_state["pf::client"] = name
+            from gtpfit.app import pages
+            st.switch_page(pages.PROFILE)
     with body:
         with st.spinner("Estimating sizes and testing the estimates…"):
             r = state.result(name, p)
