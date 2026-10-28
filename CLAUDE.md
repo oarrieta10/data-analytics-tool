@@ -57,6 +57,14 @@ interactive HTML report.
   from it), `params.py` (`BackfillParams`), `text.py` (`BACKFILL_TEXT`). Runs quality first; estimates active SKUs
   only; writes `data/workspace/<client>/_backfill/` (values, item_master_backfilled, summary with the gap left:
   orphans / kept doubts / not estimated)
+- `src/gtpfit/profile/` — the operation and its design capacity (stage 1 so far): `demand.py` (working calendar:
+  weekdays worked in ≥ `open_weekday_share` of weeks; a working weekday without orders is closed; off-day orders
+  count on the next or previous working day; demand per channel in lines / units / orders), `backlog.py` (daily
+  FIFO simulation by age with a final "or more" group; service by age, days with backlog, max days to clear,
+  utilization, design/average, peak-day coverage, percentile rank; "within N days" is judged only on work with N
+  days left in the history), `design.py` (smallest capacity meeting per-channel SLAs by bisection, binding target
+  named; `fallback_percentile` day without SLAs; `what_if`). Reproduces the consultant's capacity workbook
+  (`data/capacity model/`, local) exactly on the client it was built from: `tests/test_profile_real.py`
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)

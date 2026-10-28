@@ -17,7 +17,8 @@ import calendar
 from dataclasses import dataclass, field, fields
 
 BLOCKS = ("client", "detection")  # Client settings (always shown) · Detection settings (collapsed)
-UNITS = ("days", "count", "share", "x", "ratio", "months", "bool", "rows", "words", "numbers", "in", "lb/ft3")
+UNITS = ("days", "count", "share", "x", "ratio", "months", "bool", "rows", "words", "numbers", "in", "lb/ft3",
+         "choice")  # choice: one of the setting's options=(...)
 
 
 def setting(default, *, block, label, what, why, effect, unit, source, confidence, lo=None, hi=None, step=None,
@@ -209,6 +210,8 @@ def format_value(value, unit: str) -> str:
         return f"{value:g} days"
     if unit == "x":
         return f"{value:g}×"
+    if unit == "choice":
+        return str(value)
     return f"{value:g}"
 
 

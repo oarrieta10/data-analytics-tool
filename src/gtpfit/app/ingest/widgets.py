@@ -105,6 +105,9 @@ def control(name: str, value, key: str, cls=None):
     if unit == "months":
         return sorted(st.multiselect(label, list(range(1, 13)), default=list(value), key=key, help=tip,
                                      format_func=lambda x: calendar.month_name[x]))
+    if unit == "choice":
+        opts = list(m["options"])
+        return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key, help=tip)
     if unit == "bool":
         shown = st.toggle(label, value=(not value) if m.get("invert") else bool(value), key=key, help=tip)
         return (not shown) if m.get("invert") else shown
