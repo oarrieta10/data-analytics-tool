@@ -4,8 +4,10 @@
     save_container(spec: dict, path=None)       add or replace one container (by id), source required
 
 Sizes are converted to inches and weights to pounds on load; the file keeps the units it was written in.  A
-container needs an id, name, system, mode, inside sizes, payload, source and confidence; a payload marked
-confidence: low is listed in Container.placeholders, so results can say which values are not confirmed.
+container needs an id, name, system, mode, inside sizes, a payload, source and confidence; a payload marked
+confidence: low is listed in Container.placeholders, so results can say which values are not confirmed.  Where
+the spec limits container + goods instead (`gross_limit`), the payload is that limit less the tare.  A tapered
+(nestable) tote is fitted to its bottom inside size, the narrowest; the opening is kept as `inside_top`.
 Layouts are the whole container plus any divider cells (name, cells, splits along length and width).
 """
 from __future__ import annotations
@@ -25,7 +27,7 @@ def catalog_path() -> Path:
 TO_IN = {"in": 1.0, "mm": 1 / 25.4, "cm": 1 / 2.54}
 TO_LB = {"lb": 1.0, "kg": 1 / 0.45359237}
 MODES = ("units", "case_on_tray")
-REQUIRED = ("id", "name", "system", "mode", "inside", "payload", "source", "confidence")
+REQUIRED = ("id", "name", "system", "mode", "inside", "source", "confidence")   # and payload, or gross_limit + tare
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class Container:
     carton_range_in: tuple | None = None  # ((lo, hi) length, width, height) for case_on_tray
     cell_utilisation: float | None = None
     tare_lb: float | None = None
+    inside_top_in: tuple | None = None    # (length, width) at the opening of a tapered tote; recorded, not fitted
     status: str = ""
     placeholders: list = field(default_factory=list)
 
@@ -85,7 +88,19 @@ def parse(spec: dict) -> Container:
     inside = tuple(_length(ins, k, where) for k in ("l", "w", "h"))
     if min(inside) <= 0:
         raise ValueError(f"{where}: inside sizes must be positive.")
-    pay = spec["payload"]
+    tare = _weight(spec["tare"], where) if spec.get("tare") else None
+    if spec.get("payload"):
+        pay = spec["payload"]
+        payload = _weight(pay, where)
+    elif spec.get("gross_limit"):
+        # the spec limits container + goods: what it carries is that limit less the container's own weight
+        if tare is None:
+            raise ValueError(f"{where}: a gross_limit needs the tare to give the payload.")
+        pay = spec["gross_limit"]
+        payload = _weight(pay, where) - tare
+    else:
+        raise ValueError(f"{where}: missing payload (or gross_limit with tare).")
+    top = spec.get("inside_top")
     layouts = [Layout("whole", 1, 1, 1)] + [Layout(str(d["name"]), int(d["cells"]), int(d.get("l_split", 1)),
                                                    int(d.get("w_split", 1))) for d in spec.get("dividers") or []]
     rng = None
@@ -97,10 +112,10 @@ def parse(spec: dict) -> Container:
         rng = tuple((float(cr[k][0]) * f, float(cr[k][1]) * f) for k in ("l", "w", "h"))
     return Container(id=str(spec["id"]), name=str(spec["name"]), system=str(spec["system"]),
                      supplier=str(spec.get("supplier", "")), mode=spec["mode"], inside_in=inside,
-                     payload_lb=_weight(pay, where), layouts=layouts, source=str(spec["source"]),
+                     payload_lb=payload, layouts=layouts, source=str(spec["source"]),
                      confidence=str(spec["confidence"]), carton_range_in=rng,
-                     cell_utilisation=spec.get("cell_utilisation"),
-                     tare_lb=_weight(spec["tare"], where) if spec.get("tare") else None,
+                     cell_utilisation=spec.get("cell_utilisation"), tare_lb=tare,
+                     inside_top_in=tuple(_length(top, k, where) for k in ("l", "w")) if top else None,
                      status=str(spec.get("status", "")),
                      placeholders=["payload"] if str(pay.get("confidence", "")).lower() == "low" else [])
 

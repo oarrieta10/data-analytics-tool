@@ -65,7 +65,9 @@ def _containers(containers) -> None:
     for c in containers:
         l, w, h = c.inside_in
         rows.append({"Container": c.name, "System": c.system, "Holds": "loose units" if c.mode == "units" else
-                     "one carton", "Inside (mm)": f"{l * MM_PER_IN:.0f} × {w * MM_PER_IN:.0f} × {h * MM_PER_IN:.0f}",
+                     "one carton", "Inside (mm)": f"{l * MM_PER_IN:.0f} × {w * MM_PER_IN:.0f} × {h * MM_PER_IN:.0f}"
+                     + (" (bottom; tapered)" if c.inside_top_in else ""),
+                     "Tare (lb)": round(c.tare_lb, 1) if c.tare_lb else None,
                      "Payload (lb)": round(c.payload_lb, 1),
                      "Dividers": ", ".join(lay.name for lay in c.layouts[1:]) or "none",
                      "Placeholder values": ", ".join(c.placeholders) or "", "Source": c.source,

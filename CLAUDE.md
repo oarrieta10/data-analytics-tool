@@ -78,11 +78,14 @@ interactive HTML report.
 - `src/gtpfit/fit/` — units per SKU × container × divider cell (layer 1 of the design stage): `tessellate.py`
   (vectorised: 6 orientations, then the leftover length / width / height spaces, as in the `pbi/` tool; liquid
   cube; weight cap), `containers.py` (the catalogue `src/gtpfit/catalog/containers.yaml`, or `GTPFIT_CATALOG`:
-  inside sizes in any unit, payload, divider layouts, `units` or `case_on_tray` mode with a carton range, source and
-  confidence required; a low-confidence payload is a placeholder, named in every result), `params.py`
+  inside sizes in any unit, payload or `gross_limit` − tare, divider layouts, `units` or `case_on_tray` mode with a
+  carton range, source and confidence required; a low-confidence payload is a placeholder, named in every result;
+  tapered nestable totes are fitted to their bottom inside size), `params.py`
   (`FitParams`: cubing method, keep upright, liquid-cube utilisation). Fits active SKUs only; carries each SKU's
-  size provenance from `backfill.load_items`; writes `_fit/` (fit.parquet long, fit_summary.json). HAI containers:
-  only HaiPick System 3 and HaiPick Climb for now; payloads are placeholders until HAI confirms
+  size provenance from `backfill.load_items`; writes `_fit/` (fit.parquet long, fit_summary.json). Catalogue today:
+  **HaiPick Climb only, containers HAI lists as available for sale** (650×450×300 folding and nestable totes,
+  650×450×70 carton tray, 600×400×300 nestable tote; 30 kg gross per tote, no dividers). HPS3, mould-pending totes
+  and competitors (AutoStore) are added later
 - `src/gtpfit/tables.py` — **the one loader**: `tables.load(client)` = ingest outputs with the saved scope applied.
   Every module from quality/ onward reads through it, never from `_ingest/` directly
 - `src/gtpfit/workspace.py` — workspace paths, client.yaml, client settings (no Streamlit; pages and modules share it)

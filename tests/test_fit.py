@@ -96,14 +96,52 @@ containers:
         load_catalog(p)
 
 
-def test_the_shipped_catalogue_loads():
+def test_payload_is_the_gross_limit_less_the_tare(tmp_path):
+    p = _write(tmp_path, """
+containers:
+  - id: t1
+    name: Tote
+    system: HaiPick Climb
+    mode: units
+    inside: {l: 572, w: 377, h: 289, unit: mm}
+    inside_top: {l: 606, w: 412, unit: mm}
+    tare: {value: 2.22, unit: kg}
+    gross_limit: {value: 30, unit: kg}
+    source: spec sheet
+    confidence: high
+""")
+    c = load_catalog(p)[0]
+    assert c.payload_lb == pytest.approx((30 - 2.22) / 0.45359237) and c.placeholders == []
+    assert c.inside_in[0] == pytest.approx(572 / 25.4)          # a tapered tote is fitted to its bottom
+    assert c.inside_top_in == pytest.approx((606 / 25.4, 412 / 25.4))
+
+
+def test_a_gross_limit_needs_a_tare(tmp_path):
+    p = _write(tmp_path, """
+containers:
+  - id: t1
+    name: Tote
+    system: X
+    mode: units
+    inside: {l: 10, w: 10, h: 10, unit: in}
+    gross_limit: {value: 30, unit: kg}
+    source: s
+    confidence: high
+""")
+    with pytest.raises(ValueError, match="tare"):
+        load_catalog(p)
+
+
+def test_the_shipped_catalogue_is_haipick_climb_containers_for_sale():
     cats = load_catalog()
-    ids = {c.id for c in cats}
-    assert len(cats) >= 4 and all(c.source and c.confidence for c in cats)
+    assert len(cats) == 4 and all(c.source and c.confidence for c in cats)
+    assert {c.system for c in cats} == {"HaiPick Climb"}
+    assert all("available for sale" in c.status for c in cats)
+    assert all(not c.placeholders for c in cats)
+    assert all(c.tare_lb + c.payload_lb == pytest.approx(30 / 0.45359237) for c in cats)   # 30 kg gross
     tray = next(c for c in cats if c.mode == "case_on_tray")
     assert tray.carton_range_in is not None
-    asb = next(c for c in cats if "autostore" in c.id)
-    assert [lay.name for lay in asb.layouts] == ["whole", "1/2", "1/4", "1/8"]
+    assert all(lay.name == "whole" for c in cats for lay in c.layouts)                    # no dividers
 
 
 # ---- the assessment ---------------------------------------------------------------------------------------
