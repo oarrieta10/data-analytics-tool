@@ -21,6 +21,8 @@ DARKER_BLUE = "#04068B"    # `darker-blue`: second primary colour
 HAI_BLUE_2 = "#D1D8FF"     # `hai-blue-2`: Hai Blue tint, "fills in charts and diagrams"
 SAFETY_ORANGE = "#FF9900"  # `safety-orange`: the one accent colour; reference lines and key values
 INK_MUTED = "#5A5A5A"      # `ink-muted` (cool-grey-11): axis labels and captions on white
+BLACK_3C = "#373737"       # `black-3c`: steel grey, the third chart colour after hai-blue and safety-orange
+COOL_GREY_8 = "#AAAAAA"    # `cool-grey-8`: a lighter grey for minor or "unknown" series
 LINE = "#E6E6E6"           # `line` (cool-grey-4): gridlines and hairlines
 FONT = '"Open Sans", Arial, sans-serif'   # `sans`: the design and marketing typeface
 # Not a brand colour: backlog is drawn in red because red means work waiting (kept at the consultant's request)

@@ -85,6 +85,18 @@ def test_shares_match_the_summary_and_placeholders_are_named(tmp_path, monkeypat
     assert at.button(key="fit::to_slotting").disabled
 
 
+def test_what_sets_the_count_is_a_pie_in_brand_colours(tmp_path, monkeypatch, scope_result):
+    from gtpfit.app import theme
+    client, _ = _ws(tmp_path, monkeypatch, scope_result)
+    at = _page(client)
+    specs = [e.proto.spec for e in at.get("vega_lite_chart")]
+    pie = next(s for s in specs if "What sets the count" in s)
+    assert '"arc"' in pie and theme.HAI_BLUE in pie and "Open Sans" in pie
+    assert '"innerRadius"' in pie                                # a donut, not a full pie
+    assert pie.count('"type": "text"') == 2                     # labels outside: left side and right side
+    assert '"align": "right"' in pie and '"align": "left"' in pie
+
+
 def test_cubing_method_recomputes_and_is_saved(tmp_path, monkeypatch, scope_result):
     client, _ = _ws(tmp_path, monkeypatch, scope_result)
     at = _page(client)

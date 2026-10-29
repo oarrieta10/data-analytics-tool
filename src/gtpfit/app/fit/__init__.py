@@ -9,10 +9,12 @@ this package only lays it out.  Opens once the client's scope is saved or skippe
 from __future__ import annotations
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from gtpfit.app.quality import state as quality_state
+from gtpfit.app import theme
 from gtpfit.app.theme import HAI_BLUE
 from gtpfit.fit import FIT_TEXT, FitParams, load_catalog, save_container
 from gtpfit.ingest.params import block_fields
@@ -21,6 +23,16 @@ from gtpfit.scope import load_scope
 from . import state
 
 MM_PER_IN = 25.4
+# each limit keeps one Hai Robotics colour on every container: fits in brand blue / accent, no fit in greys
+LIMIT_COLOUR = {"size": theme.HAI_BLUE, "case_fits": theme.HAI_BLUE, "weight": theme.SAFETY_ORANGE,
+                "too_big": theme.BLACK_3C, "case_outside_tray": theme.BLACK_3C, "too_heavy": theme.INK_MUTED,
+                "missing_size": theme.COOL_GREY_8, "missing_case": theme.COOL_GREY_8}
+LIMIT_SHORT = {"size": "Space", "case_fits": "Case fits", "weight": "Weight", "too_big": "Too big",
+               "case_outside_tray": "Case won't fit", "too_heavy": "Too heavy", "missing_size": "No size",
+               "missing_case": "No case size"}
+DONUT_OUTER, DONUT_INNER = 78, 48    # px; room left and right for the labels outside the ring
+DONUT_LABEL_GAP = 8                  # px between the ring and its labels
+DONUT_MIN_LABEL = 0.04               # slices under this share are named only in the list under the donut
 
 
 def _header() -> str | None:
@@ -91,13 +103,41 @@ def _detail(r, containers) -> None:
     st.markdown(f"**{whole['skus_share']:.0%} of SKUs and {whole['lines_share']:.0%} of lines fit a whole "
                 f"{c.name}.** {s['estimated_share_of_fits']:.0%} of the SKUs that fit rest on estimated sizes "
                 "(backfill)." + (" Its payload is a placeholder." if c.placeholders else ""))
-    lim = pd.DataFrame([{"limit": FIT_TEXT[k].title, "SKUs": v, "what it means": FIT_TEXT[k].what}
+    lim = pd.DataFrame([{"limit": FIT_TEXT[k].title, "code": k, "SKUs": v, "what it means": FIT_TEXT[k].what}
                         for k, v in sorted(s["limits"].items(), key=lambda kv: -kv[1])])
+    lim["share"] = lim["SKUs"] / lim["SKUs"].sum()
+    lim["short"] = lim["code"].map(LIMIT_SHORT)
+    order = [FIT_TEXT[k].title for k in LIMIT_COLOUR if k in set(lim["code"])]
+    colour = alt.Color("limit:N", title=None, sort=order, legend=None,
+                       scale=alt.Scale(domain=order,
+                                       range=[LIMIT_COLOUR[k] for k in LIMIT_COLOUR if FIT_TEXT[k].title in order]))
+    # a donut with each slice's label ("41% Too big") just outside its edge, in the slice's colour: right-aligned on
+    # the left half, left-aligned on the right half, so labels read away from the ring.  Slices too thin to label are
+    # named in the list underneath.  Angles are worked out here (largest slice first, clockwise from the top), so
+    # labels sit on their slices even though the thin ones carry none.
+    lim = lim.sort_values("SKUs", ascending=False).reset_index(drop=True)
+    end = 2 * np.pi * lim["share"].cumsum()
+    lim["t0"], lim["t1"] = end - 2 * np.pi * lim["share"], end
+    lim["mid"] = (lim["t0"] + lim["t1"]) / 2
+    lim["label"] = [f"{s:.0%} {n}" for s, n in zip(lim["share"], lim["short"])]
+    lim["side"] = np.where(np.sin(lim["mid"]) < 0, "left", "right")
+    tip = ["limit", alt.Tooltip("SKUs:Q", format=","), alt.Tooltip("share:Q", format=".1%"), "what it means"]
+    base = alt.Chart(lim)
+    ring = base.mark_arc(innerRadius=DONUT_INNER, outerRadius=DONUT_OUTER).encode(
+        theta=alt.Theta("t0:Q", scale=None), theta2="t1:Q", color=colour, tooltip=tip)
+    labelled = base.transform_filter(alt.datum.share >= DONUT_MIN_LABEL).encode(
+        theta=alt.Theta("mid:Q", scale=None), text="label:N", color=colour, tooltip=tip)
+    pct = labelled.transform_filter(alt.datum.side == "left").mark_text(
+        radius=DONUT_OUTER + DONUT_LABEL_GAP, align="right", fontSize=13, fontWeight=600)
+    names = labelled.transform_filter(alt.datum.side == "right").mark_text(
+        radius=DONUT_OUTER + DONUT_LABEL_GAP, align="left", fontSize=13, fontWeight=600)
     c1, c2 = st.columns(2)
-    c1.altair_chart(alt.Chart(lim).mark_bar(color=HAI_BLUE).encode(
-        x=alt.X("SKUs:Q"), y=alt.Y("limit:N", sort="-x", title=None),
-        tooltip=["limit", "SKUs", "what it means"]).properties(height=200, title="What sets the count"),
-        width="stretch")
+    c1.altair_chart(theme.style_chart(alt.layer(ring, pct, names).properties(height=260, title="What sets the count")),
+                    width="stretch")
+    # every slice named under the donut, thin ones included (a legend inside the chart crowds the ring)
+    c1.markdown("<br>".join(
+        f'<span style="color:{LIMIT_COLOUR[r.code]}">●</span> {r.limit}: {r.SKUs:,} SKUs ({r.share:.1%})'
+        for r in lim.itertuples()), unsafe_allow_html=True)
     upc = pd.DataFrame({"units": list(s["units_per_container"]), "SKUs": list(s["units_per_container"].values())})
     c2.altair_chart(alt.Chart(upc).mark_bar(color=HAI_BLUE).encode(
         x=alt.X("units:N", sort=None, title="units per container"), y=alt.Y("SKUs:Q"),
