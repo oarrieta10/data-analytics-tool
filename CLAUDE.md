@@ -103,7 +103,9 @@ interactive HTML report.
     to-review lists, a SKU look-up
   - `app/loader.py` the HAI robot loading animation in the middle of the screen while a page works (replaces
     Streamlit's running icon); `app/theme.py` Hai Blue accent and the Hai Robotics logo (top left), from the
-    Hai Robotics design system; `app/static/` serves the loader, three.js and the logo files locally (see its README)
+    Hai Robotics design system, plus its chart tokens (darker-blue, hai-blue tints, safety-orange as the accent,
+    ink-muted axes, line-grey gridlines, Open Sans) and `style_chart()`; red is used only for backlog (work
+    waiting), at the consultant's request; `app/static/` serves the loader, three.js and the logo files locally (see its README)
 - `vendor/` — third-party / HAI-supplied files kept as received (e.g. the loader zip); see its README
 - `data/workspace/<client>/` — kept per client: `_ingest/` outputs, `wms_<client>.yaml` (confirmed columns, units,
   date format; saved automatically), `client.yaml` (recent folders, client settings, `scope:`), `_scope/scope_summary.csv` — git-ignored; client files are never copied

@@ -87,6 +87,21 @@ def test_saved_targets_set_the_design_capacity(tmp_path, monkeypatch, scope_resu
     assert load_sla(client) == {chans[0]: {"within": [(0, 0.99)]}}  # the page keeps what was saved
 
 
+def test_backlog_chart_shows_the_design_capacity_line(tmp_path, monkeypatch, scope_result):
+    client = _ws(tmp_path, monkeypatch, scope_result)
+    at = _page(client)
+    specs = [e.proto.spec for e in at.get("vega_lite_chart")]
+    backlog = next(s for s in specs if '"backlog"' in s)
+    assert '"design capacity"' in backlog                       # in the legend
+    assert '"rule"' in backlog and '"strokeDash"' in backlog    # drawn as a dashed horizontal line
+    assert backlog.count('"area"') == 3                         # demand, processed and backlog shaded
+    from gtpfit.app import theme
+    assert f'"{theme.SAFETY_ORANGE}"' in backlog                 # design capacity: the brand's accent
+    assert f'"{theme.DARKER_BLUE}"' in backlog and f'"{theme.HAI_BLUE_2}"' in backlog   # demand, work done
+    assert f'"{theme.BACKLOG_RED}"' in backlog                   # backlog stays red
+    assert "Open Sans" in backlog                                # the brand typeface
+
+
 def test_what_if_capacity(tmp_path, monkeypatch, scope_result):
     client = _ws(tmp_path, monkeypatch, scope_result)
     at = _page(client)

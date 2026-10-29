@@ -17,6 +17,7 @@ import streamlit as st
 
 from gtpfit import tables
 from gtpfit.app.quality import state as quality_state
+from gtpfit.app import theme
 from gtpfit.app.theme import HAI_BLUE, HAI_BLUE_4
 from gtpfit.ingest.params import block_fields
 from gtpfit.profile import ProfileParams, load_sla, save_sla, what_if
@@ -25,8 +26,6 @@ from gtpfit.scope import load_scope
 from . import state
 
 ALL = "All"
-GREY = "#5A5A5A"
-ORANGE = "#FF9900"
 
 
 def _header() -> str | None:
@@ -127,17 +126,31 @@ def _service_table(k: dict, max_age: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _backlog_chart(daily: pd.DataFrame, unit: str) -> None:
+def _backlog_chart(daily: pd.DataFrame, unit: str, capacity: float) -> None:
+    """Demand, work done and backlog per working day, with the design capacity as a dashed line."""
     d = daily.reset_index().rename(columns={"index": "date"})
     if "date" not in d:
         d = d.rename(columns={d.columns[0]: "date"})
     long = d.melt(id_vars="date", value_vars=["demand", "processed", "backlog"], var_name="series", value_name=unit)
-    chart = alt.Chart(long).mark_line(strokeWidth=1.4).encode(
-        x=alt.X("date:T", title=None), y=alt.Y(f"{unit}:Q", title=f"{unit} per day"),
-        color=alt.Color("series:N", scale=alt.Scale(domain=["demand", "processed", "backlog"],
-                                                    range=[GREY, HAI_BLUE, ORANGE]), title=None),
-        tooltip=["date:T", "series:N", alt.Tooltip(f"{unit}:Q", format=",.0f")])
-    st.altair_chart(chart.properties(height=260), width="stretch")
+    # shaded like the capacity workbook, in Hai Robotics colours: demand (darker blue) behind work done (a Hai Blue
+    # tint with a Hai Blue edge), so demand above capacity shows dark; backlog see-through red on top; the design
+    # capacity as a dashed safety-orange line
+    fills = {"demand": (theme.DARKER_BLUE, 1.0, theme.DARKER_BLUE),
+             "processed": (theme.HAI_BLUE_2, 1.0, HAI_BLUE),
+             "backlog": (theme.BACKLOG_RED, 0.55, theme.BACKLOG_RED)}
+    series = list(fills) + ["design capacity"]
+    colour = alt.Color("series:N", title=None, scale=alt.Scale(
+        domain=series, range=[f[0] for f in fills.values()] + [theme.SAFETY_ORANGE]))
+    base = alt.Chart(long).encode(x=alt.X("date:T", title=None), y=alt.Y(f"{unit}:Q", title=f"{unit} per day"),
+                                  color=colour,
+                                  tooltip=["date:T", "series:N", alt.Tooltip(f"{unit}:Q", format=",.0f")])
+    areas = [base.transform_filter(alt.datum.series == s).mark_area(
+        opacity=op, line={"color": edge, "strokeWidth": 1}, interpolate="linear")
+        for s, (_, op, edge) in fills.items()]
+    cap = alt.Chart(pd.DataFrame({unit: [float(capacity)], "series": ["design capacity"]})).mark_rule(
+        strokeDash=[7, 4], strokeWidth=2.2).encode(
+        y=f"{unit}:Q", color=colour, tooltip=["series:N", alt.Tooltip(f"{unit}:Q", format=",.0f")])
+    st.altair_chart(theme.style_chart(alt.layer(*areas, cap).properties(height=280)), width="stretch")
 
 
 def _design(name: str, r, sla: dict, p: ProfileParams) -> None:
@@ -164,7 +177,7 @@ def _design(name: str, r, sla: dict, p: ProfileParams) -> None:
         c: st.column_config.NumberColumn(format="%.1f%%") for c in tab.columns if c not in ("Channel", "Demand")} |
         {"Demand": st.column_config.NumberColumn(format="localized")})
     if d.simulation is not None:
-        _backlog_chart(d.simulation.daily[["demand", "processed", "backlog"]], unit)
+        _backlog_chart(d.simulation.daily[["demand", "processed", "backlog"]], unit, d.capacity)
     with st.expander("How it's calculated"):
         st.markdown(
             "Each working day the new work joins a queue; work left from earlier days ages by one working day. The "
