@@ -89,3 +89,29 @@ def test_strictness_recomputes(tmp_path, monkeypatch, scope_result):
     import yaml
     saved = yaml.safe_load((tmp_path / "ws" / client / "client.yaml").read_text(encoding="utf-8"))
     assert saved["quality"]["outlier_mad_k"] == 2.0  # saved for the client
+
+
+def test_a_restart_reads_the_saved_run_until_something_changes(tmp_path, monkeypatch, scope_result):
+    from gtpfit.app.quality import state
+    client = _ws(tmp_path, monkeypatch, scope_result)
+    first = _page(client)
+    tiles = [m.value for m in first.metric]
+    runs = []
+    real = state.run_quality
+    monkeypatch.setattr(state, "run_quality", lambda *a, **k: runs.append(1) or real(*a, **k))
+
+    state._run.clear()                                       # as after a restart: memory gone, files still there
+    at = _page(client)
+    assert [m.value for m in at.metric] == tiles and not runs
+
+    state._run.clear()
+    (tmp_path / "ws" / client / "_quality" / "sku_status.parquet").write_bytes(b"damaged")
+    _page(client)
+    assert len(runs) == 1                                    # a damaged file is run again
+
+    state._run.clear()
+    at = _page(client)
+    assert len(runs) == 1
+    at.number_input(key="qly::p::outlier_mad_k").set_value(9.0).run()   # a changed setting is run again
+    assert not at.exception, at.exception
+    assert len(runs) == 2

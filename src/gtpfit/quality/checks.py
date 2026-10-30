@@ -60,16 +60,33 @@ def _flags(sku, field, code, observed=None, peer_ref=None, suggested=None) -> pd
                          "observed": col(observed), "peer_ref": col(peer_ref), "suggested": col(suggested)})
 
 
+def member(s: pd.Series, values) -> pd.Series:
+    """s.isin(values), for text columns of a million rows or more: each distinct value is looked up once."""
+    codes, uniques = pd.factorize(s)
+    seen = np.zeros(len(uniques) + 1, dtype=bool)   # the extra last place is for blanks (code -1)
+    wanted = values if isinstance(values, pd.Series) else pd.Series(list(values), dtype=object)
+    pos = pd.Index(uniques).get_indexer(pd.Index(wanted.unique()))
+    seen[pos[pos >= 0]] = True
+    return pd.Series(seen[codes], index=s.index)
+
+
 def _num(d: pd.DataFrame, c: str) -> pd.Series:
     return pd.to_numeric(d[c], errors="coerce") if c in d else pd.Series(np.nan, index=d.index)
 
 
 def _group_stat(log_values: pd.Series, groups: pd.Series, clean: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Per-row median and scaled MAD of log values, computed from the clean rows of each group only."""
-    lv, g = log_values[clean], groups[clean]
-    med_g = lv.groupby(g).median()
-    mad_g = (lv - g.map(med_g)).abs().groupby(g).median() * MAD_TO_SD
-    return groups.map(med_g), groups.map(mad_g)
+    codes, uniques = pd.factorize(groups)   # numbers for the groups: text is slow to look up a million times
+
+    def per_row(stat: pd.Series) -> pd.Series:
+        by_code = np.append(stat.reindex(range(len(uniques))).to_numpy(float), np.nan)   # last place: no group (-1)
+        return pd.Series(by_code[codes], index=groups.index)
+    keep = clean.to_numpy()
+    lv, c = log_values[keep], codes[keep]
+    med_g = lv.groupby(c).median()
+    med = per_row(med_g)
+    mad_g = (lv - med[keep]).abs().groupby(c).median() * MAD_TO_SD
+    return med, per_row(mad_g)
 
 
 def run_checks(im: pd.DataFrame, orders: pd.DataFrame | None, qp: QualityParams | None = None,
@@ -97,11 +114,11 @@ def run_checks(im: pd.DataFrame, orders: pd.DataFrame | None, qp: QualityParams 
     # -- copied default size: one L x W x H on a big share of a peer group
     peers = peer_groups(d, qp.peer_min_size)
     g = peers["peer_group"]
-    triple = (v["unit_l"].round(2).astype(str) + "x" + v["unit_w"].round(2).astype(str) + "x" +
-              v["unit_h"].round(2).astype(str)).where(dims_ok & ~ph)
-    n_same = triple.groupby([g, triple]).transform("size") if triple.notna().any() else pd.Series(0, index=d.index)
+    sized = dims_ok & ~ph
+    size_key = pd.DataFrame({"g": g, **{c: v[c].round(2) for c in UNIT_DIMS}})[sized]
+    n_same = size_key.groupby(list(size_key.columns), sort=False)["g"].transform("size").reindex(d.index)         if sized.any() else pd.Series(0, index=d.index)
     group_n = g.map(g.value_counts())
-    rep = triple.notna() & (n_same >= qp.repeated_dims_min_count) & (n_same >= qp.repeated_dims_min_share * group_n)
+    rep = sized & (n_same >= qp.repeated_dims_min_count) & (n_same >= qp.repeated_dims_min_share * group_n)
     out.append(_flags(sku[rep], "unit", "repeated_dims", n_same[rep]))
 
     # -- physics: the assortment's bands
@@ -142,7 +159,7 @@ def run_checks(im: pd.DataFrame, orders: pd.DataFrame | None, qp: QualityParams 
     direct = [_slips(sku, v[c], g, clean, good[c] & ~ph, c, qp) for c in UNIT_DIMS + ["unit_weight"]]
     out += direct
     caught = set(pd.concat(direct)["sku"]) if any(len(x) for x in direct) else set()
-    out.append(_density_slips(sku, v, dens, g, clean, item_ok & ~sku.isin(caught), qp))
+    out.append(_density_slips(sku, v, dens, g, clean, item_ok & ~member(sku, caught), qp))
     for code, x in (("outlier_cube", vol), ("outlier_weight", v["unit_weight"]), ("outlier_density", dens)):
         lx = np.log(x.where(item_ok))
         med, mad = _group_stat(lx, g, clean)
@@ -157,7 +174,7 @@ def run_checks(im: pd.DataFrame, orders: pd.DataFrame | None, qp: QualityParams 
     # -- orphans: ordered in scope, not in the item master
     if orders is not None and len(orders) and "sku" in orders:
         lines = orders.groupby("sku").size()
-        missing = lines[~lines.index.isin(set(d["sku"]))]
+        missing = lines[~member(pd.Series(lines.index), d["sku"]).to_numpy()]
         out.append(_flags(pd.Series(missing.index), "*", "orphan_sku", (missing / lines.sum()).to_numpy()))
 
     f = pd.concat([x for x in out if len(x)], ignore_index=True) if any(len(x) for x in out) else \

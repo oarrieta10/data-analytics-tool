@@ -51,7 +51,8 @@ interactive HTML report.
   physics against the assortment's bands, case vs units, unit slips, peer outliers, duplicates, orphans),
   `peers.py` (sub-category → category → all, robust z in log space), `status.py` (status, readiness for unit / case
   fit, weighted score, items to measure), `text.py` (`QUALITY_TEXT`), `params.py` (`QualityParams`). Reads
-  `tables.load` only; writes `data/workspace/<client>/_quality/`; never changes a value
+  `tables.load` only; writes `data/workspace/<client>/_quality/` (with `run_key.txt`: the page reads those files back
+  after a restart when inputs, settings and quality code are unchanged); never changes a value
 - `src/gtpfit/backfill/` — estimates for item sizes quality cannot trust: `targets.py` (fill missing / zero /
   placeholder / copied values; keep every other doubt, unit slips included, with the estimate beside it and a review
   flag beyond `review_factor`; donors = trusted SKUs), `estimate.py` (case of one → nearest trusted neighbours by

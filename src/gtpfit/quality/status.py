@@ -19,7 +19,7 @@ import pandas as pd
 from gtpfit.ingest.schema import FIELD_LABEL
 from gtpfit.lines import define_lines
 
-from .checks import CODE_SEVERITY
+from .checks import CODE_SEVERITY, member
 from .params import QualityParams
 from .text import QUALITY_TEXT
 
@@ -72,26 +72,25 @@ def sku_status(im: pd.DataFrame, flags: pd.DataFrame, weights: pd.DataFrame, pee
     if len(orphans):
         base = pd.concat([base, pd.DataFrame({"sku": orphans.to_numpy(), "description": None})], ignore_index=True)
     base = base.merge(peers, on="sku", how="left")
-    problems = flags[flags["severity"].isin(["unusable", "suspect", "orphan"])]
+    problems = flags[member(flags["severity"], ["unusable", "suspect", "orphan"])]
     worst = problems.assign(r=problems["severity"].map(SEVERITY_RANK)).sort_values("r").drop_duplicates("sku")
     base["status"] = base["sku"].map(worst.set_index("sku")["severity"]).fillna("ok")
-    unus = flags[flags["severity"].isin(["unusable", "orphan"])]
-    unit_bad = set(unus.loc[unus["field"].isin(UNIT_FIELDS | {"*"}), "sku"])
-    case_bad = set(unus.loc[unus["field"].isin(CASE_FIELDS | {"*"}), "sku"])
-    derivable = set(flags.loc[flags["code"] == "case_dims_derivable", "sku"])
+    unus = flags[member(flags["severity"], ["unusable", "orphan"])]
+    unit_bad = member(base["sku"], unus.loc[member(unus["field"], UNIT_FIELDS | {"*"}), "sku"])
+    case_bad = member(base["sku"], unus.loc[member(unus["field"], CASE_FIELDS | {"*"}), "sku"])
+    derivable = member(base["sku"], flags.loc[flags["code"] == "case_dims_derivable", "sku"])
     has_case = d.set_index("sku")[[c for c in ("case_l", "case_w", "case_h") if c in d]]
     has_case = has_case.apply(pd.to_numeric, errors="coerce").gt(0).all(axis=1) if has_case.shape[1] == 3 else \
         pd.Series(False, index=d["sku"])
-    base["ready_unit_fit"] = ~base["sku"].isin(unit_bad)
-    case_dims_ok = base["sku"].map(has_case).fillna(False).astype(bool) & ~base["sku"].isin(case_bad)
-    base["ready_case_fit"] = ~base["sku"].isin(case_bad) & (case_dims_ok | (base["sku"].isin(derivable)
-                                                                            & base["ready_unit_fit"]))
+    base["ready_unit_fit"] = ~unit_bad
+    case_dims_ok = base["sku"].map(has_case).fillna(False).astype(bool) & ~case_bad
+    base["ready_case_fit"] = ~case_bad & (case_dims_ok | (derivable & base["ready_unit_fit"]))
     base = base.merge(weights, on="sku", how="left")
     for c in ("lines", "units", "on_hand"):
         base[c] = base[c].fillna(0.0) if c in base else 0.0
     base["bucket"] = ((base["lines"] > 0) | (base["on_hand"] > 0)).map({True: "active", False: INACTIVE})
     # the problem codes, listed for active SKUs (the flags table has every SKU's)
-    act = problems[problems["sku"].isin(set(base.loc[base["bucket"] == "active", "sku"]))]
+    act = problems[member(problems["sku"], base.loc[base["bucket"] == "active", "sku"])]
     base["problems"] = base["sku"].map(act.drop_duplicates(["sku", "code"]).groupby("sku")["code"].agg(", ".join))
     return base
 
@@ -130,7 +129,7 @@ def items_to_measure(status: pd.DataFrame, flags: pd.DataFrame) -> pd.DataFrame:
     """Unusable, suspect and orphan SKUs with in-scope activity, ranked by lines, with the gap closed so far."""
     bad = status[status["status"].isin(["unusable", "suspect", "orphan"]) & (status["bucket"] == "active")].copy()
     total_lines = float(status.loc[status["bucket"] == "active", "lines"].sum()) or 1.0
-    probs = flags[flags["severity"].isin(["unusable", "suspect", "orphan"]) & flags["sku"].isin(set(bad["sku"]))]
+    probs = flags[member(flags["severity"], ["unusable", "suspect", "orphan"]) & member(flags["sku"], bad["sku"])]
     by_sku = {}
     for s_, c, fld in zip(probs["sku"], probs["code"], probs["field"]):
         by_sku.setdefault(s_, []).append((c, fld))

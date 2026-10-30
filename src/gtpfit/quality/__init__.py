@@ -3,8 +3,9 @@ is wrong with the rest.
 
     run_quality(client, params=None) -> QualityResult     reads tables.load(client) only (the in-scope data)
     assess(tables, qparams, iparams, line_definition)      the same on tables in hand (pure)
-    write_outputs(result, client) -> data/workspace/<client>/_quality/
-        sku_status.parquet, sku_flags.parquet, quality_summary.json, items_to_measure.csv
+    write_outputs(result, client, run_key=None) -> data/workspace/<client>/_quality/
+        sku_status.parquet, sku_flags.parquet, quality_summary.json, items_to_measure.csv / .parquet, run_key.txt
+    load_outputs(client, run_key, params)                  those results again, when run_key still matches
 
 Reads and classifies; never changes or fills a value (backfill/ does that), never writes into the client's
 folder.  Not here: order-level checks (ingest), container fit (fit/).
@@ -21,14 +22,17 @@ import pandas as pd
 from gtpfit import tables, workspace
 from gtpfit.ingest import IngestParams
 
-from .checks import CODE_SEVERITY, CODES, run_checks
+from .checks import CODE_SEVERITY, CODES, member, run_checks
 from .params import QualityParams
 from .peers import peer_groups
 from .status import activity, items_to_measure, score, sku_status
 from .text import QUALITY_TEXT
 
-__all__ = ["QualityParams", "QualityResult", "assess", "run_quality", "write_outputs", "saved_params",
-           "QUALITY_TEXT", "CODES"]
+__all__ = ["QualityParams", "QualityResult", "assess", "run_quality", "write_outputs", "load_outputs",
+           "saved_params", "QUALITY_TEXT", "CODES"]
+
+
+RUN_KEY_FILE = "run_key.txt"
 
 
 @dataclass
@@ -44,16 +48,13 @@ def _problems(flags: pd.DataFrame, status: pd.DataFrame) -> list[dict]:
     """One row per code: SKUs, share of in-scope lines they carry, severity."""
     total = float(status.loc[status["bucket"] == "active", "lines"].sum()) or 1.0
     lines = status.drop_duplicates("sku").set_index("sku")["lines"]
-    active = set(status.loc[status["bucket"] == "active", "sku"])
-    out = []
-    for code in CODES:
-        skus = flags.loc[flags["code"] == code, "sku"].unique()
-        if not len(skus):
-            continue
-        out.append({"code": code, "title": QUALITY_TEXT[code].title, "severity": CODE_SEVERITY[code],
-                    "skus": int(len(skus)), "skus_active": int(sum(1 for s in skus if s in active)),
-                    "share_of_lines": float(lines.reindex(skus).fillna(0).sum() / total)})
-    return out
+    active = status.loc[status["bucket"] == "active", "sku"]
+    seen = flags[["code", "sku"]].drop_duplicates()
+    seen = seen.assign(active=member(seen["sku"], active), lines=seen["sku"].map(lines).fillna(0.0))
+    by_code = seen.groupby("code", sort=False).agg(skus=("sku", "size"), active=("active", "sum"), lines=("lines", "sum"))
+    return [{"code": code, "title": QUALITY_TEXT[code].title, "severity": CODE_SEVERITY[code],
+             "skus": int(by_code.at[code, "skus"]), "skus_active": int(by_code.at[code, "active"]),
+             "share_of_lines": float(by_code.at[code, "lines"] / total)} for code in CODES if code in by_code.index]
 
 
 def assess(tbls: dict, qp: QualityParams | None = None, ip: IngestParams | None = None,
@@ -93,13 +94,32 @@ def run_quality(client: str, params: QualityParams | None = None) -> QualityResu
     return assess(tables.load(client), params, workspace.client_params(client), workspace.line_definition(client))
 
 
-def write_outputs(result: QualityResult, client: str):
+def write_outputs(result: QualityResult, client: str, run_key: str | None = None):
+    """run_key says what the run depended on: load_outputs gives the results back for the same key."""
     out = workspace.client_dir(client) / "_quality"
     out.mkdir(parents=True, exist_ok=True)
+    (out / RUN_KEY_FILE).unlink(missing_ok=True)   # half-written outputs must never be reused
     st = result.status.copy()
     st["description"] = st["description"].astype("string")
     st.to_parquet(out / "sku_status.parquet", index=False)
     result.flags.to_parquet(out / "sku_flags.parquet", index=False)
     (out / "quality_summary.json").write_text(json.dumps(result.summary, indent=2), encoding="utf-8")
     result.items.to_csv(out / "items_to_measure.csv", index=False, encoding="utf-8")
+    result.items.to_parquet(out / "items_to_measure.parquet", index=False)
+    if run_key:
+        (out / RUN_KEY_FILE).write_text(run_key, encoding="utf-8")
     return out
+
+
+def load_outputs(client: str, run_key: str, params: QualityParams) -> QualityResult | None:
+    """The saved results when they came from a run with this key, else None (never run, or anything changed)."""
+    out = workspace.client_dir(client) / "_quality"
+    key = out / RUN_KEY_FILE
+    if not key.exists() or key.read_text(encoding="utf-8") != run_key:
+        return None
+    try:
+        return QualityResult(pd.read_parquet(out / "sku_flags.parquet"), pd.read_parquet(out / "sku_status.parquet"),
+                             json.loads((out / "quality_summary.json").read_text(encoding="utf-8")),
+                             pd.read_parquet(out / "items_to_measure.parquet"), params)
+    except (OSError, ValueError):   # a file went missing or was damaged: run again
+        return None

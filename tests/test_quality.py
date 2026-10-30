@@ -276,3 +276,10 @@ def test_reads_only_through_tables_load(monkeypatch, tmp_path):
     for name in ("sku_status.parquet", "sku_flags.parquet", "quality_summary.json", "items_to_measure.csv"):
         assert (out / name).exists(), name
     assert out == tmp_path / "ws" / "Acme" / "_quality"
+
+
+def test_member_is_isin():
+    from gtpfit.quality.checks import member
+    s = pd.Series(["a", "b", None, "c", "a"], dtype="string[pyarrow]", index=[5, 6, 7, 8, 9])
+    for values in (["a", "z"], {"c"}, pd.Series(["b", "b"]), [], pd.Series([], dtype=object)):
+        pd.testing.assert_series_equal(member(s, values), s.isin(list(values)).astype(bool), check_names=False)
