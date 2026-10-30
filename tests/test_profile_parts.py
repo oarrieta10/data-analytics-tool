@@ -68,13 +68,30 @@ ITEMS = pd.DataFrame({"sku": ["A", "B", "C", "D"], "unit_l": [2.0, 4, 6, 12], "u
 def test_abc_by_lines_with_cube_and_non_movers():
     inv = pd.DataFrame({"sku": ["A", "B", "C", "D"], "on_hand": [10, 10, 10, 50],
                         "snapshot_date": pd.Timestamp("2025-03-31")})
-    a = abc({"orders": ORDERS, "inventory": inv}, ITEMS, "row", ProfileParams(abc_cuts=(0.8, 0.95)))
+    a = abc({"orders": ORDERS, "inventory": inv}, ITEMS, "row", ProfileParams(abc_cuts=(0.8, 0.95, 1.0)))
     cls = a.skus.set_index("sku")["abc"]
-    assert cls["A"] == "A" and cls["B"] == "B" and cls["C"] == "C" and cls["D"] == "D (no movement)"
+    assert cls["A"] == "A" and cls["B"] == "B" and cls["C"] == "C" and cls["D"] == "No movement"
     s = a.summary.set_index("abc")
     assert s.loc["A", "lines_share"] == pytest.approx(10 / 14)
     assert s.loc["A", "cube_moved_ft3"] == pytest.approx(12 * 2 * 12 * 12 / 1728)   # 12 units of 1/6 ft3
-    assert s.loc["D (no movement)", "skus"] == 1
+    assert s.loc["No movement", "skus"] == 1
+
+
+def test_abc_classes_end_at_50_80_95_of_lines_and_d_is_the_rest():
+    counts = {"S1": 50, "S2": 30, "S3": 15, "S4": 3, "S5": 2}
+    orders = pd.DataFrame({"sku": [k for k, n in counts.items() for _ in range(n)], "qty": 1})
+    inv = pd.DataFrame({"sku": ["S1", "S9"], "on_hand": [5, 5], "snapshot_date": pd.Timestamp("2025-03-31")})
+    a = abc({"orders": orders, "inventory": inv}, None, "row", ProfileParams())
+    assert a.skus.set_index("sku")["abc"].to_dict() == {"S1": "A", "S2": "B", "S3": "C", "S4": "D", "S5": "D",
+                                                        "S9": "No movement"}
+    assert list(a.summary["abc"]) == ["A", "B", "C", "D", "No movement"]
+    assert a.summary.set_index("abc").loc["D", "lines_share"] == pytest.approx(0.05)
+
+
+def test_abc_ties_rank_by_sku():
+    orders = pd.DataFrame({"sku": ["B", "A", "C", "C"], "qty": [9, 1, 1, 1]})
+    a = abc({"orders": orders}, None, "row", ProfileParams())
+    assert list(a.skus["sku"]) == ["C", "A", "B"]
 
 
 def test_stock_days_on_hand_and_turns():

@@ -63,12 +63,12 @@ class ProfileParams:
         effect="Raise it to treat only regular days as working days; lower it to include occasional ones.",
         source=_CONSULTANT, confidence="medium")
     abc_cuts: tuple = setting(
-        (0.8, 0.95), block="detection", unit="numbers", label="ABC classes end at (share of lines)",
+        (0.5, 0.8, 0.95), block="detection", unit="numbers", label="ABC classes end at (share of lines)",
         what="SKUs ranked by order lines: class A holds the busiest SKUs up to the first share of lines, B up to "
-             "the second, C the rest; SKUs in stock that never moved are D.",
-        why="the usual 80 / 15 / 5 split of picking work",
+             "the second, C up to the third, D the rest; SKUs in stock that were never ordered are No movement.",
+        why="A, B, C and D carry 50, 30, 15 and 5% of the picking work, as in the consultant's Power BI tool",
         effect="Raise the first number for a broader A class; lower it to keep A to the very fastest movers.",
-        source="Pareto (ABC) classification, industry practice", confidence="high")
+        source="consultant's Power BI tool (A / B / C / D movers)", confidence="high")
     max_age_days: int = setting(
         6, block="detection", unit="days", lo=1, hi=30, step=1, label="Track backlog age up to",
         what="Work is tracked by how many working days it has waited, up to this many; older work is kept "

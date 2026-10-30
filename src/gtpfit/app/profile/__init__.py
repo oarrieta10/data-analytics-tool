@@ -281,9 +281,9 @@ def _abc(name: str, r) -> None:
         "cube_moved_ft3": st.column_config.NumberColumn("cube moved (ft³)", format="localized"),
         "cube_on_hand_ft3": st.column_config.NumberColumn("cube on hand (ft³)", format="localized"),
         "sized_share": st.column_config.NumberColumn("SKUs with a size", format="percent")})
-    a, b = r.params.abc_cuts
-    st.caption(f"SKUs ranked by order lines: A up to {a:.0%} of lines, B up to {b:.0%}, C the rest; D are SKUs in "
-               "stock that never moved. Cube uses the backfilled item master when backfill has run.")
+    a, b, c = r.params.abc_cuts
+    st.caption(f"SKUs ranked by order lines: A up to {a:.0%} of lines, B up to {b:.0%}, C up to {c:.0%}, D the rest; "
+               "No movement is stock that was never ordered. Cube uses the backfilled item master when backfill has run.")
     st.download_button("Download ABC per SKU", r.abc.skus.to_csv(index=False).encode("utf-8"), f"{name}_abc.csv",
                        "text/csv", key="pf::dl_abc", icon=":material/download:")
 

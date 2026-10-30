@@ -2,9 +2,10 @@
 
     abc(tables, items, line_definition, p) -> ABC(skus, summary)
 
-SKUs are ranked by order lines.  Class A runs until the cumulative share of lines reaches p.abc_cuts[0] (the
-busiest SKU is always A), B until p.abc_cuts[1], C is the rest; SKUs in stock that never moved are
-"D (no movement)".  Per class: SKUs, lines, units, cube moved (units x unit cube) and cube on hand, from items
+SKUs that were ordered are ranked by order lines (ties by SKU).  Class A runs until the cumulative share of lines
+reaches p.abc_cuts[0] (the busiest SKU is always A), B until p.abc_cuts[1], C until p.abc_cuts[2], D is the rest:
+every ordered SKU has a class, as in the consultant's Power BI tool.  SKUs in stock that were never ordered are
+"No movement".  Per class: SKUs, lines, units, cube moved (units x unit cube) and cube on hand, from items
 (the backfilled item master when there is one, so estimated sizes count too).
 """
 from __future__ import annotations
@@ -19,8 +20,8 @@ from gtpfit.lines import define_lines
 from .params import ProfileParams
 
 IN3_PER_FT3 = 1728
-NO_MOVE = "D (no movement)"
-CLASSES = ["A", "B", "C", NO_MOVE]
+NO_MOVE = "No movement"
+CLASSES = ["A", "B", "C", "D", NO_MOVE]
 
 
 @dataclass
@@ -53,17 +54,16 @@ def average_on_hand(inventory: pd.DataFrame | None) -> pd.Series:
 def abc(tables: dict, items: pd.DataFrame | None, line_definition: str = "row",
         p: ProfileParams | None = None) -> ABC:
     p = p or ProfileParams()
-    a_cut, b_cut = p.abc_cuts
+    a_cut, b_cut, c_cut = p.abc_cuts
     lines = define_lines(tables["orders"], line_definition)
     qty = pd.to_numeric(lines["qty"], errors="coerce").fillna(0.0)
     g = lines.assign(_q=qty).groupby("sku")
-    s = pd.DataFrame({"lines": g.size(), "units": g["_q"].sum()}).sort_values(["lines", "units"], ascending=False,
-                                                                              kind="stable")
+    s = pd.DataFrame({"lines": g.size(), "units": g["_q"].sum()}).sort_values("lines", ascending=False, kind="stable")
     total = float(s["lines"].sum()) or 1.0
     s["rank"] = np.arange(1, len(s) + 1)
     s["cum_share"] = s["lines"].cumsum() / total
-    s["abc"] = np.where((s["cum_share"] <= a_cut + 1e-12) | (s["rank"] == 1), "A",
-                        np.where(s["cum_share"] <= b_cut + 1e-12, "B", "C"))
+    upto = s["cum_share"] - 1e-12
+    s["abc"] = np.select([(upto <= a_cut) | (s["rank"] == 1), upto <= b_cut, upto <= c_cut], ["A", "B", "C"], "D")
     onh = average_on_hand(tables.get("inventory"))
     idle = onh[(onh > 0) & ~onh.index.isin(s.index)]
     if len(idle):
