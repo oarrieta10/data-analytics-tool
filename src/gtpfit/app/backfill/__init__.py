@@ -13,7 +13,7 @@ import dataclasses
 import pandas as pd
 import streamlit as st
 
-from gtpfit.backfill import BACKFILL_TEXT, BackfillParams
+from gtpfit.backfill import BACKFILL_TEXT, BackfillParams, is_skipped, set_skipped
 from gtpfit.ingest.params import block_fields
 from gtpfit.scope import load_scope
 
@@ -210,20 +210,46 @@ def _lookup(r) -> None:
                      width="stretch")
 
 
+def _to_profile(name: str, col=st) -> None:
+    if col.button("Continue to Profile →", key="bf::to_profile", type="primary",
+                  help="Volumes, order shape, ABC, and the design capacity from service targets."):
+        st.session_state["pf::client"] = name
+        from gtpfit.app import pages
+        st.switch_page(pages.PROFILE)
+
+
+def _skipped(name: str) -> None:
+    """Backfill is skipped for this client: nothing runs, and the page says what that leaves."""
+    st.info(f"Backfill is skipped for **{name}**. Later pages use the item master as sent, with no estimates.",
+            icon=":material/skip_next:")
+    q = quality_state.result(name, quality_state.saved_params(name)).summary["score"]["unit_fit"]["lines"]["share"]
+    st.markdown(f"**{q:.1%} of lines have usable sizes and weights.** The other {1 - q:.1%} stay as they are: a "
+                "missing size counts as missing on the Fit page.")
+    c1, c2 = st.columns([1, 2.5])
+    if c1.button("Run backfill", key="bf::unskip", help="Use estimates for this client again."):
+        set_skipped(name, False)
+        st.rerun()
+    _to_profile(name, c2)
+
+
 def page() -> None:
     name = _header()
     if not name:
+        return
+    if is_skipped(name):
+        _skipped(name)
         return
     body = st.container()
     settings_box = st.container()
     with settings_box:
         p = _settings(name)
         st.caption("Not done here: case packs and case sizes, and SKUs ordered but missing from the item master.")
-        if st.button("Continue to Profile →", key="bf::to_profile", type="primary",
-                     help="Volumes, order shape, ABC, and the design capacity from service targets."):
-            st.session_state["pf::client"] = name
-            from gtpfit.app import pages
-            st.switch_page(pages.PROFILE)
+        c1, c2 = st.columns([1, 2.5])
+        if c1.button("Skip backfill", key="bf::skip", help="Use the item master as sent, with no estimates, when the "
+                     "data is good enough. Saved for this client; it can be turned back on here."):
+            set_skipped(name, True)
+            st.rerun()
+        _to_profile(name, c2)
     with body:
         with st.spinner("Estimating sizes and testing the estimates…"):
             r = state.result(name, p)

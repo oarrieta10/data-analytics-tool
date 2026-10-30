@@ -16,6 +16,7 @@ import streamlit as st
 
 from gtpfit import tables, workspace
 from gtpfit.app.theme import HAI_BLUE
+from gtpfit.backfill import set_skipped
 from gtpfit.ingest.params import block_fields
 from gtpfit.quality import QUALITY_TEXT, QualityParams
 from gtpfit.scope import load_scope
@@ -191,11 +192,19 @@ def page() -> None:
     settings_box = st.container()
     with settings_box:
         p = _settings(name)
-        if st.button("Continue to Backfill →", key="qly::to_backfill", type="primary",
+        c1, c2 = st.columns([1.4, 2])
+        if c1.button("Continue to Backfill →", key="qly::to_backfill", type="primary",
                      help="Estimate the sizes quality cannot trust, and see how good the estimates are."):
             st.session_state["bf::client"] = name
             from gtpfit.app import pages
             st.switch_page(pages.BACKFILL)
+        if c2.button("Skip backfill →", key="qly::skip_backfill",
+                     help="Go straight to Profile with the item master as sent, when the data is good enough. Saved "
+                          "for this client; it can be turned back on from the Backfill page."):
+            set_skipped(name, True)
+            st.session_state["pf::client"] = name
+            from gtpfit.app import pages
+            st.switch_page(pages.PROFILE)
     with body:
         with st.spinner("Checking the item data…"):
             r = state.result(name, p)

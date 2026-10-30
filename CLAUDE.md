@@ -60,7 +60,9 @@ interactive HTML report.
   factor, ±25 / ±50% shares, by method and confidence, against a median-item baseline; confidence bands were set
   from it), `params.py` (`BackfillParams`), `text.py` (`BACKFILL_TEXT`). Runs quality first; estimates active SKUs
   only; writes `data/workspace/<client>/_backfill/` (values, item_master_backfilled, summary with the gap left:
-  orphans / kept doubts / not estimated)
+  orphans / kept doubts / not estimated). A client can skip backfill (`backfill_skipped:` in client.yaml; buttons on
+  the Quality and Backfill pages): nothing runs, `load_items` returns the item master as sent, earlier results are
+  kept, and Profile and Fit say so and record it in their summaries
 - `src/gtpfit/profile/` — the operation and its design capacity (stage 1 so far): `demand.py` (working calendar:
   weekdays worked in ≥ `open_weekday_share` of weeks; a working weekday without orders is closed; off-day orders
   count on the next or previous working day; demand per channel in lines / units / orders), `backlog.py` (daily

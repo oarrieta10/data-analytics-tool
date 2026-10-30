@@ -107,6 +107,36 @@ def test_filled_list_and_lookup(tmp_path, monkeypatch, scope_result):
     assert any("Borrowed from" in m.value for m in at.markdown)
 
 
+def test_skipping_runs_nothing_and_later_modules_use_the_item_master_as_sent(tmp_path, monkeypatch, scope_result):
+    from gtpfit.backfill import is_skipped, load_items
+    client = _ws(tmp_path, monkeypatch, scope_result)
+    at = _page(client)
+    assert load_items(client)["unit_weight"].notna().all()          # the estimates are in use
+    at.button(key="bf::skip").click().run()
+    assert not at.exception, at.exception
+    assert is_skipped(client)
+    assert any("skipped" in i.value for i in at.info) and not at.metric
+    assert load_items(client)["unit_weight"].isna().sum() == BLANKED   # as sent
+    assert (tmp_path / "ws" / client / "_backfill" / "values.parquet").exists()   # earlier results are kept
+
+    fresh = _page(client)                                            # still skipped when the page opens again
+    assert not fresh.metric and "of lines have usable" in _text(fresh)
+    assert not fresh.button(key="bf::to_profile").disabled
+
+    fresh.button(key="bf::unskip").click().run()
+    assert not fresh.exception, fresh.exception
+    assert not is_skipped(client) and fresh.metric
+    assert load_items(client)["unit_weight"].notna().all()
+
+
+def test_a_client_skipped_from_the_start_never_writes_backfill_outputs(tmp_path, monkeypatch, scope_result):
+    from gtpfit.backfill import set_skipped
+    client = _ws(tmp_path, monkeypatch, scope_result)
+    set_skipped(client, True)
+    _page(client)
+    assert not (tmp_path / "ws" / client / "_backfill").exists()
+
+
 def test_setting_recomputes_and_is_saved(tmp_path, monkeypatch, scope_result):
     import yaml
     client = _ws(tmp_path, monkeypatch, scope_result)

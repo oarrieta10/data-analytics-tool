@@ -375,6 +375,8 @@ def page() -> None:
     with body:
         with st.spinner("Profiling the operation and sizing the design day…"):
             r = state.result(name, p, sla)
+        if r.summary.get("backfill_skipped"):
+            st.caption("Backfill is skipped: cube figures use sizes as sent, with no estimates.")
         _design(name, r, sla, p)
         _volumes(r)
         _orders(r)

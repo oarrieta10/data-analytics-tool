@@ -97,6 +97,15 @@ def test_what_sets_the_count_is_a_pie_in_brand_colours(tmp_path, monkeypatch, sc
     assert '"align": "right"' in pie and '"align": "left"' in pie
 
 
+def test_skipping_backfill_is_stated_and_recorded(tmp_path, monkeypatch, scope_result):
+    from gtpfit.backfill import set_skipped
+    client, _ = _ws(tmp_path, monkeypatch, scope_result)
+    assert "Backfill is skipped" not in _text(_page(client))
+    set_skipped(client, True)
+    assert "Backfill is skipped" in _text(_page(client))
+    assert _summary(tmp_path)["backfill_skipped"] is True
+
+
 def test_cubing_method_recomputes_and_is_saved(tmp_path, monkeypatch, scope_result):
     client, _ = _ws(tmp_path, monkeypatch, scope_result)
     at = _page(client)

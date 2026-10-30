@@ -128,11 +128,13 @@ def save_sla(client: str, sla: dict, key: str = "sla") -> None:
 def run_profile(client: str, params: ProfileParams | None = None, sla: dict | None = None,
                 inbound_sla: dict | None = None) -> ProfileResult:
     """The profile of a client's in-scope data, with its saved targets unless others are given."""
-    from gtpfit.backfill import load_items
+    from gtpfit.backfill import is_skipped, load_items
     tbls = tables.load(client)
-    return assess(tbls, load_items(client), load_sla(client) if sla is None else sla,
-                  params or saved_params(client), workspace.line_definition(client),
-                  load_sla(client, "inbound_sla") if inbound_sla is None else inbound_sla)
+    r = assess(tbls, load_items(client), load_sla(client) if sla is None else sla,
+               params or saved_params(client), workspace.line_definition(client),
+               load_sla(client, "inbound_sla") if inbound_sla is None else inbound_sla)
+    r.summary["backfill_skipped"] = is_skipped(client)
+    return r
 
 
 def write_outputs(result: ProfileResult, client: str):

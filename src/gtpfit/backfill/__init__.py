@@ -3,8 +3,10 @@ trust it.
 
     run_backfill(client, params=None) -> BackfillResult   reads tables.load(client) only; runs quality/ on it
     assess(tables, quality_result, bp, ip)               the same on tables in hand (pure)
+    load_items(client) / is_skipped(client) / set_skipped(client, skipped)   what later modules size from; a client
+                                        whose data needs no estimates can skip backfill, and they use it as sent
     write_outputs(result, client) -> data/workspace/<client>/_backfill/
-        values.parquet                  one row per (sku, field) acted on: original, estimate, value used,
+        values.parquet                 one row per (sku, field) acted on: original, estimate, value used,
                                         action, method, confidence, similarity, neighbours
         item_master_backfilled.parquet  one row per SKU, every item field with <field>_method / _confidence
         backfill_summary.json           donors, actions, methods, readiness for unit fit before and after
@@ -35,7 +37,7 @@ from .targets import DIMS, UNIT_FIELDS, plan
 from .text import BACKFILL_TEXT
 
 __all__ = ["BackfillParams", "BackfillResult", "assess", "run_backfill", "write_outputs", "saved_params", "load_items",
-           "BACKFILL_TEXT", "METHODS", "ACTIONS"]
+           "is_skipped", "set_skipped", "BACKFILL_TEXT", "METHODS", "ACTIONS"]
 
 CASE_FIELDS = {"case", "case_l", "case_w", "case_h", "case_weight", "case_qty"}
 _ESTIMATED = ("neighbours", "neighbours_volume", "case_of_one")  # methods specific enough to send a value to review
@@ -184,11 +186,22 @@ def saved_params(client: str) -> BackfillParams:
     return BackfillParams(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in saved.items() if k in names})
 
 
+def is_skipped(client: str) -> bool:
+    """Whether the consultant chose to skip backfill for this client (backfill_skipped: in client.yaml)."""
+    return bool(workspace.read_client_yaml(client).get("backfill_skipped"))
+
+
+def set_skipped(client: str, skipped: bool) -> None:
+    """Skip backfill for this client, or stop skipping it.  Earlier results stay in _backfill/ and are used again
+    when skipping stops."""
+    workspace.write_client_yaml(client, backfill_skipped=bool(skipped))
+
+
 def load_items(client: str) -> pd.DataFrame:
     """The item master later modules size from: backfill's output (estimated values filled, each with its method)
-    when backfill has run for the client, else the item master as ingested (tables.load)."""
+    when backfill has run for the client and is not skipped, else the item master as ingested (tables.load)."""
     f = workspace.client_dir(client) / "_backfill" / "item_master_backfilled.parquet"
-    if f.exists():
+    if f.exists() and not is_skipped(client):
         return pd.read_parquet(f)
     return tables.load(client)["item_master"]
 

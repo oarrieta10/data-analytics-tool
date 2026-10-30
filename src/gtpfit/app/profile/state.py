@@ -2,7 +2,7 @@
 profile run.
 
 Session keys start with "pf::" (settings widgets "pf::p::<field>").  A profile run is cached on everything it
-depends on (the ingest outputs, the saved scope, the client settings, the backfilled item master, the profile
+depends on (the ingest outputs, the saved scope, the client settings, the backfilled item master or backfill being skipped, the profile
 settings and the service targets), and each fresh run writes data/workspace/<client>/_profile/ so the page and
 the files agree.  Settings are saved under profile: in client.yaml (only values that differ from defaults); the
 targets under profile: sla:.
@@ -16,6 +16,7 @@ import streamlit as st
 
 from gtpfit import workspace
 from gtpfit.app.quality import state as quality_state
+from gtpfit.backfill import is_skipped
 from gtpfit.profile import ProfileParams, run_profile, saved_params as profile_saved_params, write_outputs
 
 
@@ -42,7 +43,8 @@ def save_params(name: str, p: ProfileParams) -> None:
 
 def _signature(name: str) -> str:
     f = workspace.client_dir(name) / "_backfill" / "item_master_backfilled.parquet"
-    return json.dumps([quality_state._signature(name), f.stat().st_mtime_ns if f.exists() else None], default=str)
+    return json.dumps([quality_state._signature(name), f.stat().st_mtime_ns if f.exists() else None,
+                       is_skipped(name)], default=str)
 
 
 @st.cache_data(show_spinner=False, max_entries=6)

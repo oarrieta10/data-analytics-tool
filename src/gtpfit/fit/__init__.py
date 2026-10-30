@@ -191,7 +191,7 @@ def saved_params(client: str) -> FitParams:
 
 def run_fit(client: str, params: FitParams | None = None, catalog=None) -> FitResult:
     """Fit every SKU active in scope (ordered or on hand) into every catalogue container."""
-    from gtpfit.backfill import load_items
+    from gtpfit.backfill import is_skipped, load_items
     from gtpfit.profile import saved_params as profile_params
     from gtpfit.profile.velocity import abc as abc_classes
     from gtpfit.quality.status import activity
@@ -205,7 +205,9 @@ def run_fit(client: str, params: FitParams | None = None, catalog=None) -> FitRe
     lines = active.set_index("sku")["lines"]
     abc = abc_classes(tbls, items, line_def, profile_params(client)).skus.set_index("sku")["abc"]
     containers = catalog if catalog is not None else load_catalog()
-    return assess(items, containers, params or saved_params(client), lines, abc)
+    r = assess(items, containers, params or saved_params(client), lines, abc)
+    r.summary["backfill_skipped"] = is_skipped(client)
+    return r
 
 
 def write_outputs(result: FitResult, client: str):

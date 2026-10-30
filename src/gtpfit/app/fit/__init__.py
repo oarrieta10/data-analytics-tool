@@ -92,7 +92,9 @@ def _shares(r, containers) -> None:
         "SKUs that fit": st.column_config.NumberColumn(format="%.0f%%"),
         "Lines that fit": st.column_config.NumberColumn(format="%.0f%%")})
     st.caption(f"{r.summary['skus']:,} SKUs active in scope (ordered or on hand). A SKU fits when at least one unit "
-               "(or, on a tray, its case) goes in. Lines are in-scope order lines.")
+               "(or, on a tray, its case) goes in. Lines are in-scope order lines."
+               + (" Backfill is skipped: sizes are as sent, with no estimates." if r.summary.get("backfill_skipped")
+                  else ""))
 
 
 def _detail(r, containers) -> None:
